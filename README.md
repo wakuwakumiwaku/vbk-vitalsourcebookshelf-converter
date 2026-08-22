@@ -1,4 +1,5 @@
 # vbk-vitalsourcebookshelf-converter
+# vbk vitalsource bookshelf to epub converter 
 
 Converts ebooks from the ClinicalKey Student / VitalSource Bookshelf web
 reader into a clean, offline EPUB (and optionally a PDF).
