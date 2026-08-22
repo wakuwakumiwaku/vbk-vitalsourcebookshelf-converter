@@ -66,6 +66,20 @@ the licensed reader displays.
 └─────────────────────────────────────────────────────────────┘
 ```
 
+---
+
+## Getting started
+
+1. **Open the book in a logged-in reader session** (see section 0) with
+   remote debugging enabled.
+2. **Fetch the manifest**: open the reader, then from the content frame run
+   the same-origin fetches for `content.opf` and `toc.ncx` (see section 1)
+   and save them as `opf.xml` / `ncx.xml` in `OUT_ROOT`.
+3. **Walk the spine**: `python3 walk_spine.py`
+4. **Mirror assets**: `python3 mirror_assets.py`
+5. **Build the EPUB**: `python3 build_epub.py`
+   (optional PDF: `python3 build_pdf.py && python3 merge_pdf.py`)
+
 ### Requirements
 
 - Python 3.10+ with `websocket-client`, `pypdf` (PDF only), `PIL` (verification)
