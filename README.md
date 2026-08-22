@@ -1,4 +1,6 @@
-# ClinicalKey / VitalSource Reader → Offline EPUB & PDF
+# vbk-vitalsourcebookshelf-converter
+
+ClinicalKey / VitalSource Bookshelf reader → offline EPUB & PDF.
 
 A documented, reproducible workflow for **authorized personal archiving** of
 ebooks you are licensed to read (e.g. via your institution's ClinicalKey
