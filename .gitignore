@@ -1,0 +1,11 @@
+# captured book content - never commit
+book_src/
+OEBPS/
+*.vbk
+*.epub
+*.pdf
+
+# python
+__pycache__/
+*.pyc
+.venv/
