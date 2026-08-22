@@ -1,232 +1,168 @@
 # vbk-vitalsourcebookshelf-converter
 
-ClinicalKey / VitalSource Bookshelf reader → offline EPUB & PDF.
+Converts ebooks from the ClinicalKey Student / VitalSource Bookshelf web
+reader into a clean, offline EPUB (and optionally a PDF).
 
-A documented, reproducible workflow for **authorized personal archiving** of
-ebooks you are licensed to read (e.g. via your institution's ClinicalKey
-Student / VitalSource Bookshelf access).
+If you have a book in your ClinicalKey Student library, you can read it in
+the browser — but the underlying `.vbk` file is a proprietary, license-bound
+format that no generic reader can open. This project captures what the
+official web reader actually displays (text and figures) and repackages it
+into a standard EPUB3 you can open anywhere, offline.
 
-The approach is the digital equivalent of **screenshotting every page and
-rebuilding a document**: the licensed reader renders the book on screen, and
-this pipeline captures exactly what it renders — the text layer and the
-full-resolution figures — then packages it into a standards-compliant EPUB
-(and, optionally, a print-approximating PDF).
+The result is the digital equivalent of screenshotting every page and
+rebuilding a document — except the text layer stays real text and the images
+stay at full resolution.
 
-**No DRM removal. No key extraction. No decryption of the `.vbk` package.**
-The `.vbk` itself is never modified or opened beyond what the official
-reader does.
-
-> ⚠️ **Scope**: Use this only for content you are personally authorized to
-> read (valid license / institutional access). Keep the output for your own
-> study use; do not share or redistribute the resulting files.
+> Use this only for books you are personally licensed to read (e.g. through
+> your institution's ClinicalKey Student access). Keep the output for your
+> own study use. The `.vbk` file itself is never modified or decrypted.
 
 ---
 
-## Why this exists
+## What you get
 
-A `.vbk` (VitalSource) file is a proprietary, license-bound package:
-
-```
-<header format="epubbook" version="3" ...>
-  <filemap ... f="aes3"/>          <-- content encrypted (AES, 4096-byte chunks)
-  <metadata ... drm="1" .../>
-</header>
-```
-
-The decryption keys live in the reader app's private storage (tied to your
-account + device). Generic readers cannot open it. But the **official web
-reader renders the decrypted content in a browser** — that rendered output is
-what this pipeline captures.
-
-**Key insight**: fetching the raw EPUB XHTML files directly returns an
-encrypted blob (`<div id="page-content">…ciphertext…</div>`), while the
-*rendered DOM* inside the reader's content frame contains the complete plain
-text and full-resolution images. We read the rendered DOM — the same bytes
-the licensed reader displays.
+- A complete **EPUB3** (reflowable — the reading app decides pagination)
+- All chapters in the publisher's reading order
+- All figures at original resolution (no resizing, no re-encoding)
+- A clickable table of contents (from the publisher's NCX)
+- Optionally, a print-approximating **PDF** (170×240 mm, compact typography)
 
 ---
 
-## Pipeline overview
+## What you need
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ 1. Walk the spine (reading order)                          │
-│    licensed reader tab (CDP) → construct epubcfi URLs       │
-│    → capture rendered DOM of all 293 spine items            │
-├─────────────────────────────────────────────────────────────┤
-│ 2. Mirror assets                                           │
-│    images / CSS / fonts served to the licensed session      │
-│    (byte-identical copies, no resizing)                     │
-├─────────────────────────────────────────────────────────────┤
-│ 3. Sanitize                                                 │
-│    strip reader chrome (scripts, print-block CSS)           │
-│    → standalone XHTML chapters                              │
-├─────────────────────────────────────────────────────────────┤
-│ 4. Package                                                  │
-│    EPUB3: publisher spine order + NCX bookmarks             │
-│    PDF (optional): Chromium printToPDF, book format         │
-└─────────────────────────────────────────────────────────────┘
-```
+- Python 3.10+
+  - `pip install websocket-client pypdf pillow`
+- A Chromium/Chrome browser (any recent build)
+- A logged-in ClinicalKey Student session with the book in your library
 
 ---
 
-## Getting started
+## Step-by-step
 
-1. **Open the book in a logged-in reader session** (see section 0) with
-   remote debugging enabled.
-2. **Fetch the manifest**: open the reader, then from the content frame run
-   the same-origin fetches for `content.opf` and `toc.ncx` (see section 1)
-   and save them as `opf.xml` / `ncx.xml` in `OUT_ROOT`.
-3. **Walk the spine**: `python3 walk_spine.py`
-4. **Mirror assets**: `python3 mirror_assets.py`
-5. **Build the EPUB**: `python3 build_epub.py`
-   (optional PDF: `python3 build_pdf.py && python3 merge_pdf.py`)
-
-### Requirements
-
-- Python 3.10+ with `websocket-client`, `pypdf` (PDF only), `PIL` (verification)
-- A Chromium/Chrome binary with remote debugging enabled
-- A logged-in ClinicalKey Student (or VitalSource Bookshelf web) session
-  with the title in your library
-
----
-
-## How it works, step by step
-
-### 0. Find the licensed reader session
-
-Launch your normal browser automation with a dedicated profile, log in to
-ClinicalKey Student, and open the book. The reader runs as a React SPA with
-an iframe mosaic (Elsevier "jigsaw" stack):
-
-```
-https://clinicalkeymeded.elsevier.com/reader/books/<ISBN>/epubcfi/6/2[...]!/4/2
-  └─ iframe: jigsaw.elsevier.com/mosaic/wrapper.html
-       └─ iframe: jigsaw.elsevier.com/books/<ISBN>/epub/OEBPS/xhtml/<file>.xhtml
-```
-
-The innermost frame is the **content frame**. Its rendered DOM is the book.
-
-Start the browser with remote debugging (adjust path to your Chromium):
+### 1. Start the browser with remote debugging
 
 ```bash
 chromium --remote-debugging-port=9224 \
          --user-data-dir=~/.local/share/clinicalkey-profile \
          --remote-allow-origins=http://127.0.0.1:9224 \
-         https://www.clinicalkey.com/student/content/toc/<TOC-ID>
+         "https://www.clinicalkey.com/student/content/toc/<TOC-ID>"
 ```
 
-### 1. Fetch the manifest (spine + TOC)
-
-The publisher's EPUB manifest is served to the session (same-origin fetch
-from the content frame):
+Log in to ClinicalKey Student and open the book. The reader tab URL looks
+like this:
 
 ```
-https://jigsaw.elsevier.com/books/<ISBN>/epub/OEBPS/content.opf
-https://jigsaw.elsevier.com/books/<ISBN>/epub/OEBPS/toc.ncx
+https://clinicalkeymeded.elsevier.com/reader/books/<ISBN>/epubcfi/6/2[...]!/4/2
 ```
 
-- `content.opf` → `<spine>` = reading order (293 items for this title),
-  `<manifest>` = all resources
-- `toc.ncx` → bookmarks (316 navPoints for this title)
+### 2. Configure the scripts
 
-### 2. Walk the spine
+Open each script and set the two values at the top:
 
-Each spine item is addressed by an `epubcfi` URL in the *reader tab*:
-
-```
-epubcfi number = 2 × (spine_index + 1)
-https://clinicalkeymeded.elsevier.com/reader/books/<ISBN>/epubcfi/6/<N>[;vnd.vst.idref=<idref>]!/4/2
+```python
+BOOK_ID   = "<ISBN>"          # the book's ISBN / bookshelf id
+OUT_ROOT  = "<your work dir>" # where the captured files go
 ```
 
-`walk_spine.py` navigates the reader tab to each URL, waits until the content
-frame shows the expected file **and** has actually rendered content (the
-reader injects the decrypted body asynchronously after the URL changes —
-polling the frame URL alone is not enough), then saves
-`document.documentElement.outerHTML`.
+### 3. Fetch the publisher's manifest
 
-Result: one sanitizable XHTML per spine item, with text at the same positions
-as the reader shows it and images referenced by their original relative paths
-(`../images/f01-01-….jpg`).
+The book's spine (reading order) and table of contents are served to your
+logged-in session. From the reader's content frame, fetch these two files
+and save them into `OUT_ROOT`:
 
-### 3. Mirror assets
+```
+https://jigsaw.elsevier.com/books/<ISBN>/epub/OEBPS/content.opf   -> opf.xml
+https://jigsaw.elsevier.com/books/<ISBN>/epub/OEBPS/toc.ncx       -> ncx.xml
+```
 
-`mirror_assets.py` walks the OPF manifest and fetches every image/CSS/font
-through the licensed session (same-origin fetch in the content frame,
-base64 transfer). Files are saved **byte-identical** — no resizing, no
-re-encoding. This is what keeps the figures at full resolution in the output.
+(Any same-origin fetch from the content frame works — the session cookies
+make it authorized.)
 
-### 4. Sanitize
+### 4. Walk the spine
 
-The captured XHTML contains reader plumbing that must not run outside the
-licensed app:
+```bash
+python3 walk_spine.py
+```
 
-- `<script>` blocks (VST hooks, MathJax, Poptip) — content is static HTML
-- print-blocking CSS: a `<style media="print">` rule that hides the whole
-  body and shows *"To print, please use the print page range feature within
-  the application."* — this is why a naive print of the captured file yields
-  one page with that message
-- reader-injected wrapper classes
+This navigates the reader through every chapter and saves the rendered
+XHTML. It is resumable: run it again to pick up where it left off.
 
-`sanitize_xhtml.py` strips these, producing standalone chapter XHTML.
+### 5. Mirror the assets
 
-### 5. Package
+```bash
+python3 mirror_assets.py
+```
 
-**EPUB3** (`build_epub.py`):
-- `mimetype` first, uncompressed (`application/epub+zip`)
-- `META-INF/container.xml`
-- `OEBPS/content.opf` — manifest rebuilt from files actually shipped,
-  spine order taken from the publisher's OPF (identical order)
-- `OEBPS/toc.ncx` — the publisher's navPoints
-- XHTML + assets, ZIP_DEFLATED
+Downloads all images, CSS, and fonts used by the book — byte-identical
+copies, full resolution.
 
-**PDF** (`build_pdf.py` + `merge_pdf.py`, optional):
-- serve the sanitized tree over localhost, print each spine item with
-  headless Chromium `Page.printToPDF`
-- book format CSS (`170×240 mm`, compact typography) approximates the print
-  layout; EPUB remains the faithful reflowable copy
-- `merge_pdf.py` merges per-spine PDFs and adds the NCX outline
+### 6. Build the EPUB
 
----
+```bash
+python3 build_epub.py
+```
 
-## Verification
+Produces `Neuroanatomie_9._Auflage_Trepel_offline.epub` (or whatever you
+set as `EPUB_OUT`). Open it in any EPUB reader — Calibre, KOReader, Apple
+Books, Tolino, the VitalSource Bookshelf app itself, etc.
 
-- **Images**: byte-identical with publisher originals (SHA-256 sample),
-  original dimensions preserved
-- **Flow**: spine order in the output equals the publisher OPF spine order
-- **Structure**: every manifest item resolvable inside the container,
-  `mimetype` first & stored, `container.xml` present
-- **Content**: rendered smoke test — chapter opens with N/N images loaded
-  and full text present
+### 7. (Optional) Build a PDF instead / as well
+
+```bash
+python3 build_pdf.py
+python3 merge_pdf.py
+```
+
+Prints each chapter with headless Chromium and merges them into one PDF with
+bookmarks.
 
 ---
 
 ## Scripts
 
-| Script | Purpose |
+| Script | What it does |
 |---|---|
-| `cdp_helper.py` | Minimal Chrome DevTools Protocol client (WebSocket + `Runtime.evaluate`) |
-| `walk_spine.py` | Navigate the reader through all spine items, capture rendered XHTML |
-| `mirror_assets.py` | Download all images/CSS/fonts through the licensed session |
-| `sanitize_xhtml.py` | Strip reader chrome → standalone XHTML |
-| `build_epub.py` | Assemble EPUB3 container |
-| `build_pdf.py` | Print spine items to PDF via Chromium (book format) |
-| `merge_pdf.py` | Merge per-spine PDFs + add NCX bookmarks |
+| `cdp_helper.py` | Minimal Chrome DevTools Protocol client used by the others |
+| `walk_spine.py` | Steps through every chapter in the reader, saves the rendered XHTML |
+| `mirror_assets.py` | Downloads all images / CSS / fonts at original quality |
+| `sanitize_xhtml.py` | Cleans reader-specific markup out of the captured chapters |
+| `build_epub.py` | Packages everything into an EPUB3 |
+| `build_pdf.py` | Prints chapters to PDF via Chromium |
+| `merge_pdf.py` | Merges the PDF parts and adds the table of contents |
 
 ---
 
-## Notes / pitfalls
+## How it works
 
-- **Direct URL fetch ≠ rendered DOM.** `fetch(xhtml_url)` returns ciphertext;
-  only the rendered content frame has plain text. Always capture from the DOM.
-- **Wait for content, not just the URL.** The content frame URL changes
-  before the body is injected. Poll for `innerText` length / rendered images.
-- **CDP origin check.** Chromium rejects WebSocket connections unless the
-  browser is started with `--remote-allow-origins` (or a browser-like
-  User-Agent is sent in the handshake).
-- **Print-blocking CSS.** The captured HTML contains a `media="print"` rule
-  that replaces all content with an "use the app" message — remove it before
-  any printToPDF step.
-- **Reader pagination ≠ print pagination.** The EPUB is reflowable; the
-  printed page count (e.g. 442) only exists in the typeset edition. EPUB
-  output sidesteps this entirely — the reader app determines pagination.
+The reader is a web app whose innermost frame contains the decrypted,
+rendered book. Fetching the raw chapter URLs directly returns ciphertext —
+only the rendered frame holds the actual text. So the scripts:
+
+1. navigate the reader to each chapter (spine item) via its `epubcfi` URL,
+2. read the rendered DOM (text + image references),
+3. download the images through the logged-in session,
+4. strip reader-specific scripts and styles,
+5. package the result as a standard EPUB.
+
+Two things to know if something looks off:
+
+- **Wait for content, not just the URL.** The reader swaps the frame URL
+  immediately, then injects the text a moment later. The scripts poll until
+  real content is present — this is why `walk_spine.py` takes a few seconds
+  per chapter.
+- **Page counts differ from the print edition.** The EPUB is reflowable: it
+  has no fixed pages, so the reading app decides. The printed page count
+  only exists in the typeset edition.
+
+---
+
+## Notes
+
+- The captured HTML contains a hidden print-blocking style ("use the
+  application to print"). `sanitize_xhtml.py` removes it — if you ever print
+  a raw capture, this is why you get a single page with that message.
+- The publisher's `toc.ncx` is reused as-is, so the EPUB's table of contents
+  matches the book.
+- All scripts are resumable and skip work that is already done, so
+  interrupted runs can simply be restarted.

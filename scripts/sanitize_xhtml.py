@@ -2,7 +2,7 @@
 """
 Sanitize captured reader XHTML for standalone use (EPUB packaging / printing).
 
-Removes reader plumbing that must not run or apply outside the licensed app:
+Removes reader plumbing that must not run or apply outside the reader:
 
 1. all <script> blocks (VST hooks, MathJax, Poptip) - the content is static
    HTML, no script is needed to display it;
@@ -13,8 +13,7 @@ Removes reader plumbing that must not run or apply outside the licensed app:
 3. reader-injected UI wrappers (vst-ignore / vst-skip classes) that contain
    no real content.
 
-PERSONAL AUTHORIZED ARCHIVING ONLY: use only with content you are
-personally authorized to read.
+Use this only for books you are personally licensed to read.
 """
 import re
 import sys

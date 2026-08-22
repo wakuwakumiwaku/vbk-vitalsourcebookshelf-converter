@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """
-Mirror all book assets (images, CSS, fonts) from the licensed session into
+Mirror all book assets (images, CSS, fonts) from the logged-in session into
 the local OEBPS tree.
 
-PERSONAL AUTHORIZED ARCHIVING ONLY
-----------------------------------
-Assets are fetched through the user's licensed reader session (same-origin
-fetch inside the content frame) and saved byte-identical - no resizing, no
-re-encoding. Use only with content you are personally authorized to read.
+Use this only for books you are personally licensed to read; keep the output
+for your own offline study.
 
 Why fetch through the session? The images are served by jigsaw.elsevier.com
 to the logged-in reader; the session cookies make the requests authorized.
 Downloading them outside the session may 403.
+
+Assets are saved byte-identical - no resizing, no re-encoding.
 
 Resilience: while walk_spine.py navigates the reader (changing frames), the
 isolated-world execution context can go stale ("Cannot find context with

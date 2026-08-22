@@ -3,11 +3,8 @@
 Assemble the captured chapters + mirrored assets into a single searchable PDF
 (optional alternative to the EPUB output).
 
-PERSONAL AUTHORIZED ARCHIVING ONLY
-----------------------------------
-Renders the sanitized, captured chapters (content the user is licensed to
-read) with headless Chromium printToPDF - the same engine family that renders
-the licensed reader. No DRM removal, no key extraction.
+Use this only for books you are personally licensed to read; keep the output
+for your own offline study. No DRM removal, no key extraction.
 
 How it works
 ------------

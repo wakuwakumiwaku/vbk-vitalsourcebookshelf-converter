@@ -1,23 +1,16 @@
 #!/usr/bin/env python3
 """
-Walk the ClinicalKey Student reader spine via the licensed session and
+Walk the ClinicalKey Student reader spine via the logged-in session and
 capture the rendered HTML for every spine item.
 
-PERSONAL AUTHORIZED ARCHIVING ONLY
-----------------------------------
-This reads content exactly as the licensed reader renders it (the digital
-equivalent of screenshotting every page), for the user's own offline study.
-It does NOT:
-  - extract decryption keys,
-  - remove DRM,
-  - modify or decrypt the .vbk package itself.
-
-Use only with content you are personally authorized to read.
+Use this only for books you are personally licensed to read. The output is
+intended for your own offline study; the .vbk package is never modified or
+decrypted.
 
 How it works
 ------------
-The reader is a React SPA whose innermost iframe (jigsaw.elsevier.com/
-books/<ISBN>/epub/OEBPS/xhtml/...) holds the DECRYPTED, RENDERED document.
+The reader is a React app whose innermost frame (jigsaw.elsevier.com/
+books/<ISBN>/epub/OEBPS/xhtml/...) holds the decrypted, rendered document.
 Fetching the raw XHTML URL returns ciphertext; only the rendered content
 frame contains plain text. We therefore navigate the reader to each spine
 item via its epubcfi URL and capture document.documentElement.outerHTML

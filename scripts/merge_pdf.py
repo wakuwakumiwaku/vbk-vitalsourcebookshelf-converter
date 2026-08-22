@@ -3,11 +3,8 @@
 Merge the per-spine PDF parts (from build_pdf.py) into one book PDF with
 NCX-based bookmarks.
 
-PERSONAL AUTHORIZED ARCHIVING ONLY
-----------------------------------
-Combines PDFs rendered from the user's licensed reader content. No DRM
-removal, no key extraction. Use only with content you are personally
-authorized to read.
+Use this only for books you are personally licensed to read; keep the output
+for your own offline study. No DRM removal, no key extraction.
 
 How it works
 ------------

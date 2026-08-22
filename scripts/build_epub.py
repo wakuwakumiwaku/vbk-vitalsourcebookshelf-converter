@@ -2,12 +2,8 @@
 """
 Assemble a clean EPUB3 from the captured, sanitized book sources.
 
-PERSONAL AUTHORIZED ARCHIVING ONLY
-----------------------------------
-Packages content captured from the user's licensed reader session (rendered
-DOM + mirrored assets) into a standards-compliant EPUB3 container. No DRM
-removal, no key extraction. Use only with content you are personally
-authorized to read, and keep the output for your own study.
+Use this only for books you are personally licensed to read; keep the output
+for your own offline study. No DRM removal, no key extraction.
 
 What it does
 ------------
