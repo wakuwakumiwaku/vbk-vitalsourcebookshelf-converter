@@ -25,7 +25,7 @@ import argparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from cdp_helper import CDP, find_reader_tab
-from opf_parser import parse_opf
+from opf_parser import package_path, parse_opf
 
 # --- configuration (adjust for your title) ---------------------------------
 BOOK_ID = "9783437057854"                      # ISBN / bookshelf book id
@@ -84,7 +84,7 @@ def main():
 
     ok, skip, fail = 0, 0, 0
     for href, mt in targets:
-        local = os.path.join(OEBPS, href.replace("/", os.sep))
+        local = str(package_path(OEBPS, href))
         if os.path.exists(local) and os.path.getsize(local) > 100:
             skip += 1
             continue
