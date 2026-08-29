@@ -28,6 +28,7 @@ import zipfile
 import argparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from opf_parser import parse_opf
 from sanitize_xhtml import sanitize
 
 # --- configuration (adjust for your title) ---------------------------------
@@ -38,17 +39,8 @@ EPUB_OUT = "/mnt/h/WSL/vitalsource/Neuroanatomie_9._Auflage_Trepel_offline.epub"
 
 def load_spine():
     """Parse the publisher's content.opf for the ordered spine."""
-    opf = open(os.path.join(OUT_ROOT, "opf.xml"), encoding="utf-8").read()
-    items = {}
-    for m in re.finditer(r'<item\b[^>]*\bid="([^"]+)"[^>]*\bhref="([^"]+)"[^>]*\bmedia-type="([^"]+)"', opf):
-        items[m.group(1)] = (m.group(2), m.group(3))
-    spine = re.findall(r'<itemref\b[^>]*\bidref="([^"]+)"', opf)
-    out = []
-    for idx, idref in enumerate(spine):
-        href, mt = items.get(idref, (None, None))
-        if href:
-            out.append({"index": idx, "idref": idref, "href": href, "media_type": mt})
-    return out
+    _, spine = parse_opf(os.path.join(OUT_ROOT, "opf.xml"))
+    return spine
 
 def collect_assets(xhtml_files):
     """Collect all local asset paths referenced by the captured XHTML.
@@ -128,15 +120,7 @@ def main():
     with open(os.path.join(BUILD, "mimetype"), "w", encoding="utf-8") as f:
         f.write("application/epub+zip")
 
-    # 4. build content.opf from the publisher's, but manifest limited to files we ship
-    opf = open(os.path.join(OUT_ROOT, "opf.xml"), encoding="utf-8").read()
-    # keep metadata/head as-is; rebuild manifest + spine
-    head = opf.split("<manifest")[0]
-    # find metadata block (between <metadata ...> and </metadata>)
-    m = re.search(r'(<metadata.*?</metadata>)', opf, re.S)
-    metadata = m.group(1) if m else ""
-
-    # manifest: all files we actually ship
+    # 4. build content.opf with a manifest of all files we actually ship
     shipped = []
     for root, _, files in os.walk(os.path.join(BUILD, "OEBPS")):
         for fn in files:

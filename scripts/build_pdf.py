@@ -38,6 +38,7 @@ import urllib.request
 import websocket
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from opf_parser import parse_opf
 from sanitize_xhtml import sanitize
 
 # --- configuration (adjust for your title) ---------------------------------
@@ -91,17 +92,8 @@ def new_tab(cdp_http):
         return json.load(r)
 
 def load_spine():
-    opf = open(os.path.join(OUT_ROOT, "opf.xml"), encoding="utf-8").read()
-    items = {}
-    for m in re.finditer(r'<item\b[^>]*\bid="([^"]+)"[^>]*\bhref="([^"]+)"[^>]*\bmedia-type="([^"]+)"', opf):
-        items[m.group(1)] = (m.group(2), m.group(3))
-    spine = re.findall(r'<itemref\b[^>]*\bidref="([^"]+)"', opf)
-    out = []
-    for idx, idref in enumerate(spine):
-        href, mt = items.get(idref, (None, None))
-        if href:
-            out.append({"index": idx, "idref": idref, "href": href, "media_type": mt})
-    return out
+    _, spine = parse_opf(os.path.join(OUT_ROOT, "opf.xml"))
+    return spine
 
 def load_ncx_bookmarks():
     """Parse NCX navPoints into (level, label, href) bookmarks."""

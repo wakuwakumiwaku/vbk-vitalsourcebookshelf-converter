@@ -24,22 +24,16 @@ import argparse
 
 import pypdf
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from opf_parser import parse_opf
+
 OUT_ROOT = "/mnt/h/WSL/vitalsource/book_src"   # working dir from build_pdf.py
 PDF_DIR = os.path.join(OUT_ROOT, "pdf_parts")
 FINAL_PDF = "/mnt/h/WSL/vitalsource/Neuroanatomie_9._Auflage_Trepel_offline.pdf"
 
 def load_spine():
-    opf = open(os.path.join(OUT_ROOT, "opf.xml"), encoding="utf-8").read()
-    items = {}
-    for m in re.finditer(r'<item\b[^>]*\bid="([^"]+)"[^>]*\bhref="([^"]+)"[^>]*\bmedia-type="([^"]+)"', opf):
-        items[m.group(1)] = (m.group(2), m.group(3))
-    spine = re.findall(r'<itemref\b[^>]*\bidref="([^"]+)"', opf)
-    out = []
-    for idx, idref in enumerate(spine):
-        href, mt = items.get(idref, (None, None))
-        if href:
-            out.append({"index": idx, "idref": idref, "href": href})
-    return out
+    _, spine = parse_opf(os.path.join(OUT_ROOT, "opf.xml"))
+    return spine
 
 def build_outline(ncx_path):
     """Parse NCX navPoints into nested bookmark entries with page targets.

@@ -52,6 +52,7 @@ JIGSAW_BASE = f"https://jigsaw.elsevier.com/books/{BOOK_ID}/epub/OEBPS"
 # cdp_helper.py lives next to this file; import it directly
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from cdp_helper import CDP, find_reader_tab
+from opf_parser import parse_opf
 
 
 def load_spine():
@@ -60,23 +61,8 @@ def load_spine():
     Returns [{"index", "idref", "href", "media_type"}, ...] in reading order.
     The OPF must have been fetched first (see README section 1).
     """
-    opf = open(os.path.join(OUT_ROOT, "opf.xml"), encoding="utf-8").read()
-    # manifest: id -> (href, media-type)
-    items = {}
-    for m in re.finditer(r'<item\b[^>]*\bid="([^"]+)"[^>]*\bhref="([^"]+)"[^>]*\bmedia-type="([^"]+)"', opf):
-        items[m.group(1)] = (m.group(2), m.group(3))
-    spine = re.findall(r'<itemref\b[^>]*\bidref="([^"]+)"', opf)
-    spine_items = []
-    for idx, idref in enumerate(spine):
-        href, mt = items.get(idref, (None, None))
-        if href:
-            spine_items.append({
-                "index": idx,
-                "idref": idref,
-                "href": href,
-                "media_type": mt,
-            })
-    return spine_items
+    _, spine = parse_opf(os.path.join(OUT_ROOT, "opf.xml"))
+    return spine
 
 def cfi_for(item):
     """Build the reader URL (epubcfi) that opens a given spine item.

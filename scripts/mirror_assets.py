@@ -17,7 +17,6 @@ isolated-world execution context can go stale ("Cannot find context with
 specified id"). On any error we re-create the context and retry once.
 """
 import json
-import re
 import sys
 import os
 import time
@@ -26,6 +25,7 @@ import argparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from cdp_helper import CDP, find_reader_tab
+from opf_parser import parse_opf
 
 # --- configuration (adjust for your title) ---------------------------------
 BOOK_ID = "9783437057854"                      # ISBN / bookshelf book id
@@ -35,11 +35,8 @@ JIGSAW_BASE = f"https://jigsaw.elsevier.com/books/{BOOK_ID}/epub/OEBPS"
 
 def load_manifest():
     """Parse content.opf: id -> (href, media-type) for every manifest item."""
-    opf = open(os.path.join(OUT_ROOT, "opf.xml"), encoding="utf-8").read()
-    items = {}
-    for m in re.finditer(r'<item\b[^>]*\bid="([^"]+)"[^>]*\bhref="([^"]+)"[^>]*\bmedia-type="([^"]+)"', opf):
-        items[m.group(1)] = (m.group(2), m.group(3))
-    return items
+    manifest, _ = parse_opf(os.path.join(OUT_ROOT, "opf.xml"))
+    return manifest
 
 def main():
     ap = argparse.ArgumentParser()
