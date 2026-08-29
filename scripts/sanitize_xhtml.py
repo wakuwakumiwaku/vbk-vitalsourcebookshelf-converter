@@ -10,41 +10,53 @@ Removes reader plumbing that must not run or apply outside the reader:
    rule that hides the whole body and shows "To print, please use the print
    page range feature within the application." (this is why printing the raw
    capture yields a single page with that message);
-3. reader-injected UI wrappers (vst-ignore / vst-skip classes) that contain
-   no real content.
+3. empty reader-injected divs left behind by the cleanup.
 
 Use this only for books you are personally licensed to read.
 """
 import re
 import sys
 
+
+SCRIPT_BLOCK_RE = re.compile(r"<script\b[^>]*>.*?</script\s*>", re.IGNORECASE | re.DOTALL)
+EMPTY_SCRIPT_RE = re.compile(r"<script\b[^>]*/\s*>", re.IGNORECASE)
+STYLE_BLOCK_RE = re.compile(
+    r"<style\b(?P<attributes>[^>]*)>(?P<content>.*?)</style\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+STYLE_ATTRIBUTE_RE = re.compile(
+    r"(?P<name>[^\s=/>]+)\s*=\s*(?P<quote>[\"'])(?P<value>.*?)(?P=quote)",
+    re.DOTALL,
+)
+PRINT_GUARD_RE = re.compile(
+    r"To\s+print,\s+please\s+use\s+the\s+print\s+page\s+range\s+feature\s+"
+    r"within\s+the\s+application\.",
+    re.IGNORECASE,
+)
+
+
+def _remove_blocked_style(match):
+    attributes = STYLE_ATTRIBUTE_RE.finditer(match.group("attributes"))
+    if any(
+        attribute.group("name").lower() == "media"
+        and attribute.group("value").strip().lower() == "print"
+        for attribute in attributes
+    ):
+        return ""
+    if PRINT_GUARD_RE.search(match.group("content")):
+        return ""
+    return match.group(0)
+
+
 def sanitize(html):
     """Return a standalone version of the captured chapter XHTML."""
     # 1. strip all script blocks
-    html = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.S)
-    html = re.sub(r"<script[^>]*/>", "", html)
-    # 2. strip print-media style blocks (print-protection)
-    html = re.sub(
-        r"<style[^>]*media=[\"']print[\"'][^>]*>.*?</style>",
-        "", html, flags=re.S)
-    # 3. strip any style containing the print-block content guard
-    html = re.sub(
-        r"<style[^>]*>.*?display:\s*none\s*!important.*?</style>",
-        "", html, flags=re.S)
-    # 4. remove vst-ignore / vst-skip wrapper elements that contain no real
-    #    content (reader chrome). Keep anything with real text/images.
-    def keep_el(m):
-        el = m.group(0)
-        # keep if it has meaningful content
-        text = re.sub(r"<[^>]+>", "", el)
-        if len(text.strip()) >= 3 or "<img" in el:
-            # unwrap: return inner content
-            inner = re.sub(r"^<[^>]+>", "", el)
-            inner = re.sub(r"</?[^>]+>$", "", inner)
-            return inner
-        return ""
-    # 5. remove empty anchors/divs left over
-    html = re.sub(r"<div[^>]*>\s*</div>", "", html)
+    html = EMPTY_SCRIPT_RE.sub("", html)
+    html = SCRIPT_BLOCK_RE.sub("", html)
+    # 2. inspect each style independently and strip print protection
+    html = STYLE_BLOCK_RE.sub(_remove_blocked_style, html)
+    # 3. remove empty anchors/divs left over
+    html = re.sub(r"<div\b[^>]*>\s*</div\s*>", "", html, flags=re.IGNORECASE)
     return html
 
 if __name__ == "__main__":
