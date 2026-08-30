@@ -17,10 +17,11 @@ How it works
    publisher's chapter/section hierarchy.
 """
 import json
-import re
 import sys
 import os
 import argparse
+import xml.etree.ElementTree as ET
+from html.parser import HTMLParser
 
 import pypdf
 
@@ -35,31 +36,129 @@ def load_spine():
     _, spine = parse_opf(os.path.join(OUT_ROOT, "opf.xml"))
     return spine
 
+def _local_name(tag):
+    return tag.rsplit("}", 1)[-1].rsplit(":", 1)[-1]
+
+
+def _outline_label(text):
+    return text.replace("\xa0", " ").strip()
+
+
+class _FallbackNcxParser(HTMLParser):
+    """Best-effort NCX reader for malformed legacy captures."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.stack = []
+        self.points = []
+        self.sequence = 0
+
+    def handle_starttag(self, tag, attrs):
+        name = _local_name(tag).lower()
+        if name == "navpoint":
+            point = {
+                "parent": self.stack[-1] if self.stack else None,
+                "sequence": self.sequence,
+                "label": [],
+                "has_text": False,
+                "text_depth": 0,
+                "href": None,
+            }
+            self.points.append(point)
+            self.stack.append(point)
+            self.sequence += 1
+        elif name == "text" and self.stack:
+            self.stack[-1]["has_text"] = True
+            self.stack[-1]["text_depth"] += 1
+        elif name == "content" and self.stack:
+            attributes = {_local_name(key).lower(): value for key, value in attrs}
+            self.stack[-1]["href"] = attributes.get("src")
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        self.handle_endtag(tag)
+
+    def handle_data(self, data):
+        if self.stack and self.stack[-1]["text_depth"]:
+            self.stack[-1]["label"].append(data)
+
+    def handle_endtag(self, tag):
+        name = _local_name(tag).lower()
+        if name == "text" and self.stack:
+            self.stack[-1]["text_depth"] = max(0, self.stack[-1]["text_depth"] - 1)
+        elif name == "navpoint" and self.stack:
+            self.stack.pop()
+
+    def close(self):
+        super().close()
+        self.stack.clear()
+
+    def outline(self):
+        outline = []
+        for point in self.points:
+            href = point["href"]
+            if not point["has_text"] or not href:
+                continue
+            depth = 0
+            parent = point["parent"]
+            while parent is not None:
+                if parent["has_text"] and parent["href"]:
+                    depth += 1
+                parent = parent["parent"]
+            label = _outline_label("".join(point["label"]))
+            outline.append((depth, label, href))
+        return outline
+
+
 def build_outline(ncx_path):
     """Parse NCX navPoints into nested bookmark entries with page targets.
 
     Returns list of (level, label, href) sorted by doc order.
     """
-    ncx = open(ncx_path, encoding="utf-8").read()
-    # Extract navPoint hierarchy
-    points = []
-    # find all navPoint blocks with their nesting
-    stack = []
-    for m in re.finditer(r'<navPoint\b[^>]*>|<navPoint\b[^>]*/>|</navPoint>|<navLabel>\s*<text>(.*?)</text>\s*</navLabel>\s*<content src="([^"]+)"/>', ncx, re.S):
-        pass
-    # simpler: use an XML-ish parse with regex on pairs
-    pattern = re.compile(
-        r'<navPoint[^>]*>.*?<navLabel>\s*<text>(.*?)</text>\s*</navLabel>\s*<content src="([^"]+)"/>',
-        re.S)
-    flat = []
-    for m in pattern.finditer(ncx):
-        label = re.sub(r"<[^>]+>", "", m.group(1))
-        label = (label.replace("&#x000FC;", "ü").replace("&#x000E4;", "ä")
-                 .replace("&#x000F6;", "ö").replace("&#x000DF;", "ß")
-                 .replace("&amp;", "&").replace("&#160;", " ").replace("&nbsp;", " ")
-                 .replace("&#x000C4;", "Ä").replace("&#x000D6;", "Ö").replace("&#x000DC;", "Ü"))
-        flat.append((label.strip(), m.group(2)))
-    return flat
+    with open(ncx_path, encoding="utf-8") as source:
+        ncx = source.read().replace("&nbsp;", "&#160;")
+    try:
+        root = ET.fromstring(ncx)
+    except ET.ParseError:
+        parser = _FallbackNcxParser()
+        parser.feed(ncx)
+        parser.close()
+        return parser.outline()
+
+    def child_named(parent, name):
+        return next(
+            (child for child in parent if _local_name(child.tag) == name),
+            None,
+        )
+
+    nav_map = next(
+        (element for element in root.iter() if _local_name(element.tag) == "navMap"),
+        None,
+    )
+    if nav_map is None:
+        return []
+
+    outline = []
+
+    def add_navpoints(parent, depth):
+        for nav_point in parent:
+            if _local_name(nav_point.tag) != "navPoint":
+                continue
+
+            nav_label = child_named(nav_point, "navLabel")
+            content = child_named(nav_point, "content")
+            text = child_named(nav_label, "text") if nav_label is not None else None
+            href = content.get("src") if content is not None else None
+            child_depth = depth
+            if text is not None and href:
+                label = _outline_label("".join(text.itertext()))
+                outline.append((depth, label, href))
+                child_depth += 1
+
+            add_navpoints(nav_point, child_depth)
+
+    add_navpoints(nav_map, 0)
+    return outline
 
 def main():
     ap = argparse.ArgumentParser()
@@ -112,48 +211,28 @@ def main():
         href_index[item["href"].split("#")[0]] = item["index"]
 
     # parse NCX navPoints with levels
-    ncx = open(os.path.join(OUT_ROOT, "ncx.xml"), encoding="utf-8").read()
-    navs = re.findall(
-        r'<navPoint\b[^>]*>.*?<navLabel>\s*<text>(.*?)</text>\s*</navLabel>\s*<content src="([^"]+)"/>',
-        ncx, re.S)
-    # depth estimation: count navPoint nesting via position
-    # simpler: use playOrder-less approach - the NCX nesting can be derived from
-    # the document structure. For pypdf we need parent hierarchy; pypdf supports
-    # add_outline_item with parent, so we track the last item at each level.
-    # We'll approximate levels by looking at the navPoint tag depth.
-    stack = []  # list of (depth, outline_ref)
-    pos = 0
-    for m in re.finditer(r'<navPoint\b|</navPoint>|<navLabel>\s*<text>(.*?)</text>\s*</navLabel>\s*<content src="([^"]+)"/>', ncx, re.S):
-        if m.group(0).startswith("<navPoint"):
-            stack.append((len(stack), None))
-        elif m.group(0) == "</navPoint>":
-            if stack:
-                stack.pop()
-        elif m.group(1) is not None:
-            label = re.sub(r"<[^>]+>", "", m.group(1))
-            label = (label.replace("&#x000FC;", "ü").replace("&#x000E4;", "ä")
-                     .replace("&#x000F6;", "ö").replace("&#x000DF;", "ß")
-                     .replace("&amp;", "&").replace("&#160;", " ").replace("&nbsp;", " ")
-                     .replace("&#x000C4;", "Ä").replace("&#x000D6;", "Ö").replace("&#x000DC;", "Ü"))
-            href = m.group(2)
-            base = href.split("#")[0]
-            idx = href_index.get(base)
-            if idx is not None and idx in offset:
-                page_num = offset[idx]
-                depth = len(stack) if stack else 0
-                # find parent = nearest stack entry below
-                parent = None
-                for d, ref in stack:
-                    if d < depth and ref is not None:
-                        parent = ref
-                try:
-                    ref = writer.add_outline_item(label.strip(), page_num, parent=parent)
-                    if stack:
-                        stack[-1] = (len(stack) - 1, ref)
-                except Exception as e:
-                    print(f"outline error for '{label}': {e}")
-            else:
-                print(f"  no page for navpoint '{label}' -> {href}")
+    parents = []
+    for depth, label, href in build_outline(os.path.join(OUT_ROOT, "ncx.xml")):
+        parents = parents[:depth]
+        if len(parents) < depth:
+            parents.extend([None] * (depth - len(parents)))
+
+        base = href.split("#")[0]
+        idx = href_index.get(base)
+        ref = None
+        if idx is not None and idx in offset:
+            page_num = offset[idx]
+            parent = next(
+                (candidate for candidate in reversed(parents) if candidate is not None),
+                None,
+            )
+            try:
+                ref = writer.add_outline_item(label, page_num, parent=parent)
+            except Exception as e:
+                print(f"outline error for '{label}': {e}")
+        else:
+            print(f"  no page for navpoint '{label}' -> {href}")
+        parents.append(ref)
 
     with open(args.out, "wb") as f:
         writer.write(f)
