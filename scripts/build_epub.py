@@ -55,7 +55,8 @@ def collect_assets(xhtml_files):
         if not os.path.exists(src_xf):
             continue
         try:
-            html = open(src_xf, encoding="utf-8").read()
+            with open(src_xf, encoding="utf-8") as source:
+                html = source.read()
         except Exception:
             continue
         base = os.path.dirname(src_xf)
@@ -89,7 +90,8 @@ def main():
         if not os.path.exists(sp):
             print(f"  WARN missing captured xhtml: {href}")
             continue
-        html = open(sp, encoding="utf-8").read()
+        with open(sp, encoding="utf-8") as source:
+            html = source.read()
         html = sanitize(html)
         # EPUB xhtml must not contain absolute jigsaw URLs or vst chrome
         dp = str(package_path(build_oebps, href))
@@ -197,7 +199,8 @@ def main():
         f.write(opf_out)
 
     # 5. copy NCX (with navPoints) — keep as-is
-    ncx = open(os.path.join(OUT_ROOT, "ncx.xml"), encoding="utf-8").read()
+    with open(os.path.join(OUT_ROOT, "ncx.xml"), encoding="utf-8") as source:
+        ncx = source.read()
     with open(os.path.join(BUILD, "OEBPS", "toc.ncx"), "w", encoding="utf-8") as f:
         f.write(ncx)
 

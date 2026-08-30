@@ -1,7 +1,9 @@
 import io
+import gc
 import sys
 import tempfile
 import unittest
+import warnings
 import zipfile
 import xml.etree.ElementTree as ET
 from contextlib import redirect_stdout
@@ -48,17 +50,26 @@ class BuildEpubTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with (
-                mock.patch.multiple(
-                    build_epub,
-                    OUT_ROOT=str(out_root),
-                    OEBPS=str(oebps),
-                    BUILD=str(build),
-                ),
-                mock.patch.object(sys, "argv", ["build_epub.py", "--out", str(epub_out)]),
-                redirect_stdout(io.StringIO()),
-            ):
-                build_epub.main()
+            with warnings.catch_warnings(record=True) as captured_warnings:
+                warnings.simplefilter("always", ResourceWarning)
+                with (
+                    mock.patch.multiple(
+                        build_epub,
+                        OUT_ROOT=str(out_root),
+                        OEBPS=str(oebps),
+                        BUILD=str(build),
+                    ),
+                    mock.patch.object(
+                        sys, "argv", ["build_epub.py", "--out", str(epub_out)]
+                    ),
+                    redirect_stdout(io.StringIO()),
+                ):
+                    build_epub.main()
+                gc.collect()
+
+            self.assertFalse(
+                [warning for warning in captured_warnings if warning.category is ResourceWarning]
+            )
 
             with zipfile.ZipFile(epub_out) as epub:
                 names = epub.namelist()
