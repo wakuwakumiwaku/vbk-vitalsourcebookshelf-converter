@@ -1,9 +1,13 @@
 import io
+import functools
 import sys
 import tempfile
+import threading
 import unittest
+import urllib.request
 import zipfile
 from contextlib import redirect_stdout
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
@@ -11,6 +15,33 @@ from scripts import build_epub, build_pdf, walk_spine
 
 
 class WalkSpinePackagingTests(unittest.TestCase):
+    def test_encoded_capture_path_is_served_by_encoded_url(self):
+        class QuietHandler(SimpleHTTPRequestHandler):
+            def log_message(self, format, *args):
+                pass
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with mock.patch.object(walk_spine, "OEBPS", str(root)):
+                chapter = walk_spine.capture_path("xhtml/Chapter%20%C3%9C.xhtml")
+            chapter.parent.mkdir(parents=True)
+            chapter.write_text("encoded", encoding="utf-8")
+
+            handler = functools.partial(QuietHandler, directory=str(root))
+            server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                url = (
+                    f"http://127.0.0.1:{server.server_port}/"
+                    "xhtml/Chapter%20%C3%9C.xhtml"
+                )
+                self.assertEqual(urllib.request.urlopen(url).read(), b"encoded")
+            finally:
+                server.shutdown()
+                thread.join()
+                server.server_close()
+
     def test_duplicate_basenames_flow_from_capture_to_epub(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -95,10 +126,10 @@ class WalkSpinePackagingTests(unittest.TestCase):
                     b"<html><body>Encoded chapter</body></html>",
                 )
 
-    def test_pdf_sanitization_recurses_into_nested_spine_paths(self):
+    def test_pdf_sanitization_covers_nested_non_xhtml_spine_paths(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             clean_dir = Path(temp_dir)
-            chapter = clean_dir / "xhtml" / "front" / "chapter.xhtml"
+            chapter = clean_dir / "sections" / "front" / "chapter.xhtml"
             chapter.parent.mkdir(parents=True)
             chapter.write_text(
                 "<html><head></head><body><script>remove()</script><p>Keep</p></body></html>",

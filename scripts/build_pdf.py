@@ -161,9 +161,8 @@ def get_pdf(cdp, tab_id, url, out_path):
 
 
 def sanitize_xhtml_tree(clean_dir, css_override):
-    """Sanitize every captured XHTML file, including nested spine paths."""
-    xhtml_dir = os.path.join(clean_dir, "xhtml")
-    for root, _, files in os.walk(xhtml_dir):
+    """Sanitize every captured XHTML file anywhere in the package tree."""
+    for root, _, files in os.walk(clean_dir):
         for filename in files:
             if not filename.endswith(".xhtml"):
                 continue
