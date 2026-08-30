@@ -27,9 +27,9 @@ Usage
   --start/--end : resume a partial run by spine index range
   --only N      : capture just one spine item (debugging)
 
-Output: one XHTML file per spine item under OUT_ROOT/OEBPS/xhtml/, plus a
-log of what was captured. Skips items whose previous capture is > 5 KB
-(assumed complete).
+Output: one XHTML file per spine item at its package-relative path under
+OUT_ROOT/OEBPS/, plus a log of what was captured. Skips items whose previous
+capture is > 5 KB (assumed complete).
 """
 import json
 import re
@@ -38,6 +38,7 @@ import os
 import time
 import base64
 import argparse
+from urllib.parse import unquote, urlsplit
 
 # --- configuration (adjust for your title) ---------------------------------
 BOOK_ID = "9783437057854"                      # ISBN / bookshelf book id
@@ -49,10 +50,9 @@ STATE_JSON = os.path.join(OUT_ROOT, "capture_state.json")
 READER_BASE = f"https://clinicalkeymeded.elsevier.com/reader/books/{BOOK_ID}/epubcfi"
 JIGSAW_BASE = f"https://jigsaw.elsevier.com/books/{BOOK_ID}/epub/OEBPS"
 
-# cdp_helper.py lives next to this file; import it directly
+# Local helper modules live next to this file; import them directly.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from cdp_helper import CDP, find_reader_tab
-from opf_parser import parse_opf
+from opf_parser import package_path, parse_opf
 
 
 def load_spine():
@@ -75,6 +75,17 @@ def cfi_for(item):
     # epubcfi number = 2*(index+1)
     n = 2 * (item["index"] + 1)
     return f"{READER_BASE}/6/{n}[%3Bvnd.vst.idref%3D{item['idref']}]!/4/2"
+
+
+def capture_path(href):
+    """Return the safe local destination for a package-relative spine href."""
+    return package_path(OEBPS, href)
+
+
+def frame_matches_href(frame_url, expected_href):
+    """Match the complete package path, not only a possibly duplicate basename."""
+    expected_path = f"/epub/OEBPS/{unquote(expected_href)}"
+    return unquote(urlsplit(frame_url).path).endswith(expected_path)
 
 def find_book_frame(cdp):
     """Locate the innermost content frame (jigsaw.elsevier.com/books/...).
@@ -105,8 +116,6 @@ def wait_for_frame(cdp, expected_href, timeout=40):
     real text (>= 30 chars) or at least one rendered image inside a section.
     """
     deadline = time.time() + timeout
-    fname = os.path.basename(expected_href)
-
     def find_book_frame():
         frames = cdp.call("Page.getFrameTree")
         def walk(node):
@@ -122,7 +131,7 @@ def wait_for_frame(cdp, expected_href, timeout=40):
 
     while time.time() < deadline:
         bf = find_book_frame()
-        if bf and fname in bf.get("url", ""):
+        if bf and frame_matches_href(bf.get("url", ""), expected_href):
             # check that content actually rendered
             try:
                 world = cdp.call("Page.createIsolatedWorld", {
@@ -170,6 +179,8 @@ def get_rendered_html(cdp, book_frame):
     return res.get("result", {}).get("value", "")
 
 def main():
+    from cdp_helper import CDP, find_reader_tab
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--start", type=int, default=0)
     ap.add_argument("--end", type=int, default=None)
@@ -191,13 +202,11 @@ def main():
         sys.exit(1)
     cdp = CDP(tab["webSocketDebuggerUrl"])
 
-    xhtml_dir = os.path.join(OEBPS, "xhtml")
-    os.makedirs(xhtml_dir, exist_ok=True)
-
     ok, fail = 0, 0
     for item in spine:
         idx = item["index"]
-        out_path = os.path.join(xhtml_dir, os.path.basename(item["href"]))
+        out_path = capture_path(item["href"])
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         # Skip only if a previous capture exists AND looks complete (has body content)
         if os.path.exists(out_path) and os.path.getsize(out_path) > 5000:
             print(f"[{idx}] SKIP (exists): {item['href']}")

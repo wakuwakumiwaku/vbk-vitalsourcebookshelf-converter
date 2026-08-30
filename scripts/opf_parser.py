@@ -105,9 +105,14 @@ def _validate_href(href):
     return parsed.path
 
 
+def package_relative_path(href):
+    """Return the decoded package-relative filesystem path for a safe href."""
+    return PurePosixPath(unquote(_validate_href(href)))
+
+
 def package_path(root, href):
     """Resolve a safe manifest href beneath a local package root."""
-    relative_path = PurePosixPath(_validate_href(href))
+    relative_path = package_relative_path(href)
     root = Path(root).resolve()
     destination = root.joinpath(*relative_path.parts).resolve()
     try:

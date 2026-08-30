@@ -35,10 +35,9 @@ import socketserver
 import threading
 import base64
 import urllib.request
-import websocket
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from opf_parser import parse_opf
+from opf_parser import package_path, parse_opf
 from sanitize_xhtml import sanitize
 
 # --- configuration (adjust for your title) ---------------------------------
@@ -109,6 +108,8 @@ def load_ncx_bookmarks():
     return marks
 
 def get_pdf(cdp, tab_id, url, out_path):
+    import websocket
+
     ws_url = None
     with urllib.request.urlopen(f"http://127.0.0.1:{CDP_PORT}/json") as r:
         tabs = json.load(r)
@@ -158,6 +159,21 @@ def get_pdf(cdp, tab_id, url, out_path):
     c.close()
     return os.path.getsize(out_path)
 
+
+def sanitize_xhtml_tree(clean_dir, css_override):
+    """Sanitize every captured XHTML file, including nested spine paths."""
+    xhtml_dir = os.path.join(clean_dir, "xhtml")
+    for root, _, files in os.walk(xhtml_dir):
+        for filename in files:
+            if not filename.endswith(".xhtml"):
+                continue
+            path = os.path.join(root, filename)
+            with open(path, encoding="utf-8") as source:
+                html = sanitize(source.read())
+            html = html.replace("</head>", f"<style>\n{css_override}\n</style>\n</head>")
+            with open(path, "w", encoding="utf-8") as destination:
+                destination.write(html)
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--start", type=int, default=0)
@@ -172,20 +188,12 @@ def main():
 
     os.makedirs(PDF_DIR, exist_ok=True)
     # sanitize all captured xhtml into a parallel tree
-    from sanitize_xhtml import sanitize
     clean_dir = os.path.join(OUT_ROOT, "OEBPS_clean")
     shutil.rmtree(clean_dir, ignore_errors=True)
     shutil.copytree(OEBPS, clean_dir)
-    xhtml_dir = os.path.join(clean_dir, "xhtml")
-    css_override = open(os.path.join(OUT_ROOT, "print_book.css"), encoding="utf-8").read()
-    for f in os.listdir(xhtml_dir):
-        if f.endswith(".xhtml"):
-            p = os.path.join(xhtml_dir, f)
-            html = open(p, encoding="utf-8").read()
-            html = sanitize(html)
-            # inject book-format print CSS before </head>
-            html = html.replace("</head>", f"<style>\n{css_override}\n</style>\n</head>")
-            open(p, "w", encoding="utf-8").write(html)
+    with open(os.path.join(OUT_ROOT, "print_book.css"), encoding="utf-8") as source:
+        css_override = source.read()
+    sanitize_xhtml_tree(clean_dir, css_override)
     print("sanitized tree at", clean_dir)
 
     httpd = start_server(clean_dir)
@@ -199,7 +207,7 @@ def main():
 
     ok, fail = 0, 0
     for item in spine:
-        src = os.path.join(clean_dir, item["href"])
+        src = package_path(clean_dir, item["href"])
         if not os.path.exists(src) or os.path.getsize(src) < 300:
             # fall back to raw tree (uncaptured items are skipped at walk level)
             print(f"[{item['index']}] SKIP missing clean source: {item['href']}")

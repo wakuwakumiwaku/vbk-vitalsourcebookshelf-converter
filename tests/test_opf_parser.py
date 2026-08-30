@@ -127,6 +127,10 @@ class ParseOpfTests(unittest.TestCase):
                 package_path(root, "styles/book.css"),
                 root / "styles" / "book.css",
             )
+            self.assertEqual(
+                package_path(root, "xhtml/Chapter%20%C3%9C.xhtml"),
+                root / "xhtml" / "Chapter Ü.xhtml",
+            )
 
             outside = Path(temp_dir, "outside")
             outside.mkdir()

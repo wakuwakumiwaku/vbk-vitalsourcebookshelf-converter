@@ -28,7 +28,7 @@ import zipfile
 import argparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from opf_parser import parse_opf
+from opf_parser import package_path, package_relative_path, parse_opf
 from sanitize_xhtml import sanitize
 
 # --- configuration (adjust for your title) ---------------------------------
@@ -81,20 +81,19 @@ def main():
     print(f"spine items: {len(spine)}")
 
     # 1. copy + sanitize all xhtml
-    src_xhtml = os.path.join(OEBPS, "xhtml")
-    dst_xhtml = os.path.join(BUILD, "OEBPS", "xhtml")
-    os.makedirs(dst_xhtml, exist_ok=True)
+    build_oebps = os.path.join(BUILD, "OEBPS")
     xhtml_files = []
     for item in spine:
-        fname = os.path.basename(item["href"])
-        sp = os.path.join(src_xhtml, fname)
+        href = item["href"]
+        sp = str(package_path(OEBPS, href))
         if not os.path.exists(sp):
-            print(f"  WARN missing captured xhtml: {fname}")
+            print(f"  WARN missing captured xhtml: {href}")
             continue
         html = open(sp, encoding="utf-8").read()
         html = sanitize(html)
         # EPUB xhtml must not contain absolute jigsaw URLs or vst chrome
-        dp = os.path.join(dst_xhtml, fname)
+        dp = str(package_path(build_oebps, href))
+        os.makedirs(os.path.dirname(dp), exist_ok=True)
         with open(dp, "w", encoding="utf-8") as f:
             f.write(html)
         xhtml_files.append(dp)
@@ -165,9 +164,8 @@ def main():
     # spine: publisher order, only for items we have
     spine_lines = []
     for item in spine:
-        fname = os.path.basename(item["href"])
         # find the manifest id for this file
-        rel = "xhtml/" + fname
+        rel = package_relative_path(item["href"]).as_posix()
         if rel in shipped:
             mid = f"id{shipped.index(rel):04d}"
             spine_lines.append(f'    <itemref idref="{mid}"/>')
