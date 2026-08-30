@@ -23,8 +23,6 @@ import argparse
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 
-import pypdf
-
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from opf_parser import parse_opf
 
@@ -161,6 +159,8 @@ def build_outline(ncx_path):
     return outline
 
 def main():
+    import pypdf
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=FINAL_PDF)
     args = ap.parse_args()
