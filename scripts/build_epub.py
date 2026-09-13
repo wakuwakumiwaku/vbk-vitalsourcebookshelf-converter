@@ -26,6 +26,7 @@ import sys
 import shutil
 import zipfile
 import argparse
+from urllib.parse import quote
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from opf_parser import package_path, package_relative_path, parse_opf
@@ -160,8 +161,10 @@ def main():
     manifest_lines = []
     for i, rel in enumerate(shipped):
         mid = f"id{i:04d}"
+        # Encode filesystem names as URI paths; quotes and XML delimiters are escaped too.
+        href = quote(rel, safe="/")
         manifest_lines.append(
-            f'    <item id="{mid}" href="{rel}" media-type="{media_type(rel)}"/>')
+            f'    <item id="{mid}" href="{href}" media-type="{media_type(rel)}"/>')
 
     # spine: publisher order, only for items we have
     spine_lines = []
@@ -226,8 +229,10 @@ def main():
         mi = z.read("mimetype")
         print("mimetype content:", mi)
         missing = []
-        for rel in shipped:
-            if rel not in names:
+        # OPF-relative filenames live under OEBPS in the archive. Include files
+        # generated after the shipped-file inventory as well.
+        for rel in [*shipped, ncx_rel, "content.opf"]:
+            if f"OEBPS/{rel}" not in names:
                 missing.append(rel)
         print("missing shipped files in zip:", len(missing))
         for mref in missing[:10]:
