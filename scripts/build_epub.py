@@ -48,11 +48,13 @@ def collect_assets(xhtml_files):
     xhtml_files are in OEBPS/xhtml; refs like ../images/... resolve to OEBPS.
     Absolute/data:/anchor refs are ignored."""
     assets = set()
+    chapter_sources = set()
     pat = re.compile(r'(?:src|href)="([^"#]+)"')
     for xf in xhtml_files:
         # xf is in the BUILD tree; find the matching source in OEBPS
         rel = os.path.relpath(xf, os.path.join(BUILD, "OEBPS"))
         src_xf = os.path.join(OEBPS, rel)
+        chapter_sources.add(os.path.normpath(src_xf))
         if not os.path.exists(src_xf):
             continue
         try:
@@ -68,7 +70,8 @@ def collect_assets(xhtml_files):
             p = os.path.normpath(os.path.join(base, ref))
             if os.path.exists(p) and os.path.commonpath([p, OEBPS]) == OEBPS:
                 assets.add(p)
-    return assets
+    # Chapter links must not copy raw captures over the sanitized spine files.
+    return assets - chapter_sources
 
 def main():
     ap = argparse.ArgumentParser()

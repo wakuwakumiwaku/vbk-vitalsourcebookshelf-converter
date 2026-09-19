@@ -15,7 +15,7 @@ from scripts.opf_parser import package_relative_path, parse_opf
 
 
 class BuildEpubTests(unittest.TestCase):
-    def _build_synthetic_epub(self, root, chapters):
+    def _build_synthetic_epub(self, root, chapters, chapter_html=None):
         out_root = root / "source"
         oebps = out_root / "OEBPS"
         build = root / "build"
@@ -27,7 +27,8 @@ class BuildEpubTests(unittest.TestCase):
             source = oebps / rel
             source.parent.mkdir(parents=True, exist_ok=True)
             source.write_text(
-                f"<html><body>Chapter {index}</body></html>", encoding="utf-8"
+                (chapter_html or {}).get(rel, f"<html><body>Chapter {index}</body></html>"),
+                encoding="utf-8",
             )
             item_id = f"chapter{index}"
             ET.SubElement(manifest, "item", {
@@ -48,6 +49,48 @@ class BuildEpubTests(unittest.TestCase):
         ):
             build_epub.main()
         return epub_out, output.getvalue()
+
+    def test_chapter_links_do_not_restore_unsanitized_captures(self):
+        for link_href in ("one.xhtml", "two.xhtml"):
+            with self.subTest(link_href=link_href), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                stylesheet = root / "source" / "OEBPS" / "styles" / "book.css"
+                stylesheet.parent.mkdir(parents=True)
+                css = b"p { color: navy; }\n"
+                stylesheet.write_bytes(css)
+                chapter_html = {
+                    "xhtml/one.xhtml": (
+                        '<html><head><link rel="stylesheet" href="../styles/book.css" />'
+                        '<script src="reader.js"></script></head><body>'
+                        f'<p>Chapter one</p><a href="{link_href}">Read chapter</a>'
+                        '</body></html>'
+                    ),
+                    "xhtml/two.xhtml": (
+                        '<html><head><script>window.readerHook = true;</script></head>'
+                        '<body><p>Chapter two</p></body></html>'
+                    ),
+                }
+                epub_out, output = self._build_synthetic_epub(
+                    root, [(rel, rel) for rel in chapter_html], chapter_html=chapter_html
+                )
+                with zipfile.ZipFile(epub_out) as epub:
+                    self.assertIsNone(epub.testzip())
+                    self.assertEqual(epub.read("OEBPS/styles/book.css"), css)
+                    for rel, original in chapter_html.items():
+                        chapter = ET.fromstring(epub.read(f"OEBPS/{rel}"))
+                        self.assertEqual(chapter.findall(".//script"), [])
+                        self.assertEqual(
+                            chapter.findtext(".//p"), ET.fromstring(original).findtext(".//p")
+                        )
+                        self.assertEqual(
+                            (root / "source" / "OEBPS" / rel).read_text(encoding="utf-8"),
+                            original,
+                        )
+                    first = ET.fromstring(epub.read("OEBPS/xhtml/one.xhtml"))
+                    self.assertEqual(
+                        [link.get("href") for link in first.findall(".//a")], [link_href]
+                    )
+                self.assertIn("assets copied: 1\n", output)
 
     def test_manifest_hrefs_round_trip_special_filenames(self):
         cases = [
