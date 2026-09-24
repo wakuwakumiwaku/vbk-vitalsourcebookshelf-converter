@@ -51,7 +51,9 @@ class BuildEpubTests(unittest.TestCase):
         return epub_out, output.getvalue()
 
     def test_chapter_links_do_not_restore_unsanitized_captures(self):
-        for link_href in ("one.xhtml", "two.xhtml"):
+        for link_href in (
+            "one.xhtml", "two.xhtml", "two.xhtml#section", "two.xhtml?v=1", "%74wo.xhtml"
+        ):
             with self.subTest(link_href=link_href), tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
                 stylesheet = root / "source" / "OEBPS" / "styles" / "book.css"
@@ -91,6 +93,85 @@ class BuildEpubTests(unittest.TestCase):
                         [link.get("href") for link in first.findall(".//a")], [link_href]
                     )
                 self.assertIn("assets copied: 1\n", output)
+
+    def test_copies_assets_referenced_by_uri(self):
+        cases = [
+            ("images/figure.svg", "../images/figure.svg", "src"),
+            ("images/figure one.svg", "../images/figure%20one.svg", "src"),
+            ("images/figure.svg", "../images/figure.svg?v=1", "src"),
+            ("images/figure.svg", "../images/figure.svg#view", "src"),
+            ("images/figure&one.svg", "../images/figure&amp;one.svg", "src"),
+            ("images/literal%20.svg", "../images/literal%2520.svg", "src"),
+            ("images/figure#1?.svg", "../images/figure%231%3F.svg", "src"),
+            ("images/Figur Ü.svg", "../images/Figur%20%C3%9C.svg", "src"),
+            ("styles/book style.css", "../styles/book%20style.css?v=1#sheet", "href"),
+        ]
+        for filename, ref, attribute in cases:
+            with self.subTest(ref=ref), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                asset = root / "source" / "OEBPS" / filename
+                asset.parent.mkdir(parents=True)
+                data = (
+                    b'<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0L1 1" /></svg>'
+                    if attribute == "src" else b"p { color: navy; }\n"
+                )
+                asset.write_bytes(data)
+                element = (
+                    f'<img src="{ref}" alt="Figure" />' if attribute == "src"
+                    else f'<link rel="stylesheet" href="{ref}" />'
+                )
+                chapter = f"<html><body>{element}</body></html>"
+                epub_out, output = self._build_synthetic_epub(
+                    root, [("xhtml/chapter.xhtml", "xhtml/chapter.xhtml")],
+                    chapter_html={"xhtml/chapter.xhtml": chapter},
+                )
+                with zipfile.ZipFile(epub_out) as epub:
+                    self.assertIsNone(epub.testzip())
+                    self.assertIn(f"OEBPS/{filename}", epub.namelist())
+                    self.assertEqual(epub.read(f"OEBPS/{filename}"), data)
+                    self.assertEqual(epub.read("OEBPS/xhtml/chapter.xhtml"), chapter.encode())
+                    opf = epub.read("OEBPS/content.opf")
+                    ET.fromstring(opf)
+                    manifest, _ = parse_opf(io.BytesIO(opf))
+                    members = {
+                        "OEBPS/" + package_relative_path(href).as_posix()
+                        for href, _ in manifest.values()
+                    }
+                    self.assertIn(f"OEBPS/{filename}", members)
+                    self.assertTrue(members.issubset(epub.namelist()))
+                self.assertEqual(asset.read_bytes(), data)
+                self.assertIn("assets copied: 1\n", output)
+
+    def test_ignores_nonlocal_and_pathless_asset_references(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            oebps = root / "source" / "OEBPS"
+            asset = oebps / "images" / "figure.svg"
+            asset.parent.mkdir(parents=True)
+            asset.write_bytes(b"local image")
+            (oebps.parent / "outside.svg").write_bytes(b"outside package")
+            refs = [
+                "https://example.org/images/figure.svg",
+                "//example.org/images/figure.svg",
+                asset.as_uri(),
+                asset.as_posix(),
+                "../../outside.svg",
+                "%2e%2e/%2e%2e/outside.svg",
+                "#figure",
+                "?v=1",
+                "data:image/svg+xml;base64,PHN2Zy8+",
+                "https://[invalid",
+            ]
+            chapter = '<html><body>' + ''.join(
+                f'<img src="{ref}" alt="Ignored" />' for ref in refs
+            ) + '</body></html>'
+            epub_out, output = self._build_synthetic_epub(
+                root, [("xhtml/chapter.xhtml", "xhtml/chapter.xhtml")],
+                chapter_html={"xhtml/chapter.xhtml": chapter},
+            )
+            with zipfile.ZipFile(epub_out) as epub:
+                self.assertFalse(any(name.endswith(".svg") for name in epub.namelist()))
+            self.assertIn("assets copied: 0\n", output)
 
     def test_manifest_hrefs_round_trip_special_filenames(self):
         cases = [

@@ -26,7 +26,8 @@ import sys
 import shutil
 import zipfile
 import argparse
-from urllib.parse import quote
+from html import unescape
+from urllib.parse import quote, unquote, urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from opf_parser import package_path, package_relative_path, parse_opf
@@ -49,7 +50,7 @@ def collect_assets(xhtml_files):
     Absolute/data:/anchor refs are ignored."""
     assets = set()
     chapter_sources = set()
-    pat = re.compile(r'(?:src|href)="([^"#]+)"')
+    pat = re.compile(r'(?:src|href)="([^"]+)"')
     for xf in xhtml_files:
         # xf is in the BUILD tree; find the matching source in OEBPS
         rel = os.path.relpath(xf, os.path.join(BUILD, "OEBPS"))
@@ -64,11 +65,17 @@ def collect_assets(xhtml_files):
             continue
         base = os.path.dirname(src_xf)
         for m in pat.finditer(html):
-            ref = m.group(1)
-            if ref.startswith(("http://", "https://", "data:", "#", "mailto:")):
+            try:
+                ref = urlsplit(unescape(m.group(1)))
+            except ValueError:
                 continue
-            p = os.path.normpath(os.path.join(base, ref))
-            if os.path.exists(p) and os.path.commonpath([p, OEBPS]) == OEBPS:
+            if ref.scheme or ref.netloc or not ref.path:
+                continue
+            path = unquote(ref.path)
+            if os.path.isabs(path):
+                continue
+            p = os.path.normpath(os.path.join(base, path))
+            if os.path.isfile(p) and os.path.commonpath([p, OEBPS]) == OEBPS:
                 assets.add(p)
     # Chapter links must not copy raw captures over the sanitized spine files.
     return assets - chapter_sources
