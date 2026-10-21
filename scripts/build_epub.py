@@ -8,7 +8,7 @@ for your own offline study. No DRM removal, no key extraction.
 What it does
 ------------
 1. copies + sanitizes every captured spine XHTML (sanitize_xhtml.py);
-2. copies every local asset referenced by the XHTML (images/CSS/fonts),
+2. copies local XHTML references and mirrored manifest images/CSS/fonts,
    preserving the relative ../images/... structure - byte-identical copies,
    images are NOT resized or re-encoded;
 3. writes META-INF/container.xml and the uncompressed first-entry mimetype;
@@ -39,16 +39,25 @@ OEBPS = os.path.join(OUT_ROOT, "OEBPS")
 BUILD = "/tmp/epub_build"                      # staging dir
 EPUB_OUT = "/mnt/h/WSL/vitalsource/Neuroanatomie_9._Auflage_Trepel_offline.epub"
 
-def load_spine():
-    """Parse the publisher's content.opf for the ordered spine."""
-    _, spine = parse_opf(os.path.join(OUT_ROOT, "opf.xml"))
-    return spine
+def collect_assets(xhtml_files, manifest):
+    """Collect local XHTML references and mirrored static manifest resources.
 
-def collect_assets(xhtml_files):
-    """Collect all local asset paths referenced by the captured XHTML.
-    xhtml_files are in OEBPS/xhtml; refs like ../images/... resolve to OEBPS.
-    Absolute/data:/anchor refs are ignored."""
+    CSS can import other stylesheets and reference fonts or background figures.
+    Keep all mirrored CSS/images/fonts from the manifest so those indirect
+    dependencies survive without parsing or rewriting the publisher's CSS.
+    """
     assets = set()
+    for href, media_type in manifest.values():
+        if (
+            media_type == "text/css"
+            or media_type.startswith(("image/", "font/"))
+            or media_type in {
+                "application/font-woff", "application/font-sfnt", "application/vnd.ms-opentype"
+            }
+        ):
+            # Validate the resolved source without changing its archive-relative name.
+            if os.path.isfile(package_path(OEBPS, href)):
+                assets.add(os.path.join(OEBPS, package_relative_path(href)))
     chapter_sources = set()
     pat = re.compile(r'(?:src|href)="([^"]+)"')
     for xf in xhtml_files:
@@ -89,7 +98,7 @@ def main():
     os.makedirs(os.path.join(BUILD, "META-INF"), exist_ok=True)
     os.makedirs(os.path.join(BUILD, "OEBPS"), exist_ok=True)
 
-    spine = load_spine()
+    manifest, spine = parse_opf(os.path.join(OUT_ROOT, "opf.xml"))
     print(f"spine items: {len(spine)}")
 
     # 1. copy + sanitize all xhtml
@@ -112,8 +121,8 @@ def main():
         xhtml_files.append(dp)
     print(f"xhtml copied+sanitized: {len(xhtml_files)}")
 
-    # 2. copy referenced assets preserving relative structure
-    assets = collect_assets(xhtml_files)
+    # 2. copy referenced and manifest assets preserving relative structure
+    assets = collect_assets(xhtml_files, manifest)
     for a in sorted(assets):
         rel = os.path.relpath(a, OEBPS)
         dst = os.path.join(BUILD, "OEBPS", rel)

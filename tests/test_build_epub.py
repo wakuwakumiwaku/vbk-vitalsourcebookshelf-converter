@@ -15,7 +15,7 @@ from scripts.opf_parser import package_relative_path, parse_opf
 
 
 class BuildEpubTests(unittest.TestCase):
-    def _build_synthetic_epub(self, root, chapters, chapter_html=None):
+    def _build_synthetic_epub(self, root, chapters, chapter_html=None, manifest_assets=None):
         out_root = root / "source"
         oebps = out_root / "OEBPS"
         build = root / "build"
@@ -35,6 +35,14 @@ class BuildEpubTests(unittest.TestCase):
                 "id": item_id, "href": href, "media-type": "application/xhtml+xml"
             })
             ET.SubElement(spine, "itemref", idref=item_id)
+        for index, (rel, (href, media_type, data)) in enumerate((manifest_assets or {}).items()):
+            if data is not None:
+                source = oebps / rel
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_bytes(data)
+            ET.SubElement(manifest, "item", {
+                "id": f"asset{index}", "href": href, "media-type": media_type
+            })
         ET.ElementTree(package).write(out_root / "opf.xml", encoding="utf-8")
         (out_root / "ncx.xml").write_text(
             '<?xml version="1.0"?><ncx><navMap /></ncx>', encoding="utf-8"
@@ -141,6 +149,97 @@ class BuildEpubTests(unittest.TestCase):
                     self.assertTrue(members.issubset(epub.namelist()))
                 self.assertEqual(asset.read_bytes(), data)
                 self.assertIn("assets copied: 1\n", output)
+
+    def test_packages_assets_referenced_only_by_stylesheets(self):
+        for font_name, font_type in (
+            ("symbols.woff2", "font/woff2"),
+            ("symbols.woff", "application/font-woff"),
+            ("symbols.otf", "application/vnd.ms-opentype"),
+            ("symbols.ttf", "font/ttf"),
+            ("symbols.ttf", "application/font-sfnt"),
+            ("symbols.otf", "application/font-sfnt"),
+        ):
+            with self.subTest(font_type=font_type), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                resources = {
+                    "styles/book.css": (
+                        "styles/book.css", "text/css",
+                        b'@import url("nested/theme.css");\n',
+                    ),
+                    "styles/nested/theme.css": (
+                        "styles/nested/theme.css", "text/css",
+                        (
+                            '@import "../book.css";\n'
+                            '@font-face { font-family: symbols; '
+                            f'src: url("../../fonts/{font_name}"); }}\n'
+                            '.diagram { background-image: url("../../images/figure%20one.svg"); }\n'
+                        ).encode(),
+                    ),
+                    f"fonts/{font_name}": (
+                        f"fonts/{font_name}", font_type, b"synthetic font bytes\x00\xff",
+                    ),
+                    "images/figure one.svg": (
+                        "images/figure%20one.svg", "image/svg+xml",
+                        b'<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0L1 1" /></svg>',
+                    ),
+                }
+                chapter = (
+                    '<html><head><link rel="stylesheet" href="../styles/book.css" />'
+                    '</head><body><p class="diagram">Chapter text</p></body></html>'
+                )
+                epub_out, output = self._build_synthetic_epub(
+                    root, [("xhtml/chapter.xhtml", "xhtml/chapter.xhtml")],
+                    chapter_html={"xhtml/chapter.xhtml": chapter}, manifest_assets=resources,
+                )
+                with zipfile.ZipFile(epub_out) as epub:
+                    self.assertIsNone(epub.testzip())
+                    expected_members = {f"OEBPS/{rel}" for rel in resources}
+                    self.assertTrue(
+                        expected_members.issubset(epub.namelist()),
+                        f"Missing stylesheet dependencies: {expected_members - set(epub.namelist())}",
+                    )
+                    opf = epub.read("OEBPS/content.opf")
+                    ET.fromstring(opf)
+                    manifest, spine = parse_opf(io.BytesIO(opf))
+                    manifest_members = {
+                        "OEBPS/" + package_relative_path(href).as_posix()
+                        for href, _ in manifest.values()
+                    }
+                    self.assertTrue(expected_members.issubset(manifest_members))
+                    self.assertTrue(manifest_members.issubset(epub.namelist()))
+                    self.assertEqual([item["href"] for item in spine], ["xhtml/chapter.xhtml"])
+                    for rel, (_, _, data) in resources.items():
+                        self.assertEqual(epub.read(f"OEBPS/{rel}"), data)
+                        self.assertEqual((root / "source" / "OEBPS" / rel).read_bytes(), data)
+                self.assertIn("assets copied: 4\n", output)
+
+    def test_manifest_assets_do_not_restore_scripts_or_nonspine_xhtml(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            chapter = (
+                '<html><head><script>readerHook()</script></head>'
+                '<body><p>Keep chapter text</p></body></html>'
+            )
+            resources = {
+                "reader.js": ("reader.js", "application/javascript", b"readerHook()"),
+                "extra.xhtml": (
+                    "extra.xhtml", "application/xhtml+xml",
+                    b"<html><body><script>readerHook()</script></body></html>",
+                ),
+                "missing.css": ("missing.css", "text/css", None),
+                "missing.svg": ("missing.svg", "image/svg+xml", None),
+                "missing.woff2": ("missing.woff2", "font/woff2", None),
+            }
+            epub_out, output = self._build_synthetic_epub(
+                Path(temp_dir), [("xhtml/chapter.xhtml", "xhtml/chapter.xhtml")],
+                chapter_html={"xhtml/chapter.xhtml": chapter}, manifest_assets=resources,
+            )
+            with zipfile.ZipFile(epub_out) as epub:
+                self.assertIsNone(epub.testzip())
+                self.assertTrue({f"OEBPS/{rel}" for rel in resources}.isdisjoint(epub.namelist()))
+                cleaned = ET.fromstring(epub.read("OEBPS/xhtml/chapter.xhtml"))
+                self.assertEqual(cleaned.findall(".//script"), [])
+                self.assertEqual(cleaned.findtext(".//p"), "Keep chapter text")
+            self.assertIn("assets copied: 0\n", output)
 
     def test_ignores_nonlocal_and_pathless_asset_references(self):
         with tempfile.TemporaryDirectory() as temp_dir:
