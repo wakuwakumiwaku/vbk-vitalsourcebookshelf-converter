@@ -26,7 +26,9 @@ import sys
 import shutil
 import zipfile
 import argparse
+import tempfile
 from html import unescape
+from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -89,10 +91,36 @@ def collect_assets(xhtml_files, manifest):
     # Chapter links must not copy raw captures over the sanitized spine files.
     return assets - chapter_sources
 
+def output_uses_build(destination, build_root):
+    """Check resolved locations AND entries needed to traverse the output path."""
+    pending = [destination]
+    seen = set()
+    while pending:
+        path = pending.pop()
+        if path in seen:
+            continue
+        seen.add(path)
+        if path.is_relative_to(build_root) or path.resolve().is_relative_to(build_root):
+            return True
+        if path.parent != path:
+            pending.append(path.parent)
+        if path.is_symlink():
+            # resolve() alone erases an intermediate BUILD/redirect -> outside,
+            # including when an external alias points to that redirect.
+            pending.append(path.parent / path.readlink())
+    return False
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=EPUB_OUT)
     args = ap.parse_args()
+
+    out_path = os.path.abspath(args.out)
+    destination = Path(out_path)
+    build_root = Path(BUILD).resolve()
+    if output_uses_build(destination, build_root):
+        raise ValueError("EPUB output must be outside the build directory.")
 
     shutil.rmtree(BUILD, ignore_errors=True)
     os.makedirs(os.path.join(BUILD, "META-INF"), exist_ok=True)
@@ -226,36 +254,39 @@ def main():
     with open(os.path.join(BUILD, "OEBPS", "toc.ncx"), "w", encoding="utf-8") as f:
         f.write(ncx)
 
-    # 6. zip as EPUB (mimetype first, STORED)
-    if os.path.exists(args.out):
-        os.remove(args.out)
-    with zipfile.ZipFile(args.out, "w") as z:
-        z.write(os.path.join(BUILD, "mimetype"), "mimetype", compress_type=zipfile.ZIP_STORED)
-        for root, _, files in os.walk(BUILD):
-            for fn in files:
-                full = os.path.join(root, fn)
-                rel = os.path.relpath(full, BUILD)
-                if rel == "mimetype":
-                    continue
-                z.write(full, rel, compress_type=zipfile.ZIP_DEFLATED)
-    print(f"\nWROTE {args.out}")
+    # 6. Write beside the destination, then publish only after close/readback.
+    # The private directory is on the same filesystem for atomic replacement.
+    with tempfile.TemporaryDirectory(prefix=".epub-", dir=destination.parent) as staging:
+        staged_output = os.path.join(staging, "book.epub")
+        with zipfile.ZipFile(staged_output, "w") as z:
+            z.write(os.path.join(BUILD, "mimetype"), "mimetype", compress_type=zipfile.ZIP_STORED)
+            for root, _, files in os.walk(BUILD):
+                for fn in files:
+                    full = os.path.join(root, fn)
+                    rel = os.path.relpath(full, BUILD)
+                    if rel == "mimetype":
+                        continue
+                    z.write(full, rel, compress_type=zipfile.ZIP_DEFLATED)
 
-    # verification
-    with zipfile.ZipFile(args.out) as z:
-        names = z.namelist()
-        print("entries:", len(names))
-        print("mimetype first:", names[0] == "mimetype")
-        mi = z.read("mimetype")
-        print("mimetype content:", mi)
-        missing = []
-        # OPF-relative filenames live under OEBPS in the archive. Include files
-        # generated after the shipped-file inventory as well.
-        for rel in [*shipped, ncx_rel, "content.opf"]:
-            if f"OEBPS/{rel}" not in names:
-                missing.append(rel)
-        print("missing shipped files in zip:", len(missing))
-        for mref in missing[:10]:
-            print("  ", mref)
+        # Verification uses the unpublished archive; readback errors leave the
+        # previous output intact, just like write or replacement errors.
+        with zipfile.ZipFile(staged_output) as z:
+            names = z.namelist()
+            print("entries:", len(names))
+            print("mimetype first:", names[0] == "mimetype")
+            mi = z.read("mimetype")
+            print("mimetype content:", mi)
+            missing = []
+            # OPF-relative filenames live under OEBPS in the archive. Include
+            # files generated after the shipped-file inventory as well.
+            for rel in [*shipped, ncx_rel, "content.opf"]:
+                if f"OEBPS/{rel}" not in names:
+                    missing.append(rel)
+            print("missing shipped files in zip:", len(missing))
+            for mref in missing[:10]:
+                print("  ", mref)
+        os.replace(staged_output, out_path)
+    print(f"\nWROTE {args.out}")
 
 if __name__ == "__main__":
     main()

@@ -58,6 +58,259 @@ class BuildEpubTests(unittest.TestCase):
             build_epub.main()
         return epub_out, output.getvalue()
 
+    def _previous_epub(self, root):
+        target, _ = self._build_synthetic_epub(
+            root, [("xhtml/previous.xhtml", "xhtml/previous.xhtml")]
+        )
+        with zipfile.ZipFile(target) as archive:
+            self.assertIsNone(archive.testzip())
+            self.assertIn("OEBPS/xhtml/previous.xhtml", archive.namelist())
+        return target, target.read_bytes()
+
+    def test_existing_epub_survives_archive_write_failure(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target, previous = self._previous_epub(root)
+            original_write = zipfile.ZipFile.write
+
+            def fail_after_mimetype(archive, filename, arcname, **kwargs):
+                if arcname != "mimetype":
+                    raise OSError("simulated archive write failure")
+                return original_write(archive, filename, arcname, **kwargs)
+
+            with mock.patch.object(zipfile.ZipFile, "write", new=fail_after_mimetype):
+                with self.assertRaisesRegex(OSError, "simulated archive write failure"):
+                    self._build_synthetic_epub(root, [("chapter.xhtml", "chapter.xhtml")])
+
+            self.assertEqual(target.read_bytes(), previous)
+            self.assertEqual(list(root.glob(".epub-*")), [])
+
+    def test_failed_first_build_leaves_no_epub(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            original_write = zipfile.ZipFile.write
+
+            def fail_after_mimetype(archive, filename, arcname, **kwargs):
+                if arcname != "mimetype":
+                    raise OSError("simulated archive write failure")
+                return original_write(archive, filename, arcname, **kwargs)
+
+            with mock.patch.object(zipfile.ZipFile, "write", new=fail_after_mimetype):
+                with self.assertRaisesRegex(OSError, "simulated archive write failure"):
+                    self._build_synthetic_epub(root, [("chapter.xhtml", "chapter.xhtml")])
+
+            self.assertFalse((root / "book.epub").exists())
+            self.assertEqual(list(root.glob(".epub-*")), [])
+
+    def test_existing_epub_survives_archive_verification_failure(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target, previous = self._previous_epub(root)
+            original_zipfile = zipfile.ZipFile
+
+            def fail_verification(filename, mode="r", *args, **kwargs):
+                if mode == "r":
+                    raise zipfile.BadZipFile("simulated archive verification failure")
+                self.assertEqual(mode, "w")
+                return original_zipfile(filename, "w", *args, **kwargs)
+
+            with mock.patch.object(zipfile, "ZipFile", side_effect=fail_verification):
+                with self.assertRaisesRegex(zipfile.BadZipFile, "simulated archive verification failure"):
+                    self._build_synthetic_epub(root, [("chapter.xhtml", "chapter.xhtml")])
+
+            self.assertEqual(target.read_bytes(), previous)
+            self.assertEqual(list(root.glob(".epub-*")), [])
+
+    def test_existing_epub_survives_atomic_replacement_failure(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target, previous = self._previous_epub(root)
+            with mock.patch.object(build_epub.os, "replace", side_effect=OSError("simulated replacement failure")):
+                with self.assertRaisesRegex(OSError, "simulated replacement failure"):
+                    self._build_synthetic_epub(root, [("chapter.xhtml", "chapter.xhtml")])
+
+            self.assertEqual(target.read_bytes(), previous)
+            self.assertEqual(list(root.glob(".epub-*")), [])
+
+    def test_successful_rebuild_replaces_previous_epub(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target, _ = self._previous_epub(root)
+            result, output = self._build_synthetic_epub(
+                root, [("chapter.xhtml", "chapter.xhtml")]
+            )
+            self.assertEqual(result, target)
+            with zipfile.ZipFile(target) as archive:
+                self.assertIsNone(archive.testzip())
+                self.assertEqual(archive.infolist()[0].filename, "mimetype")
+                self.assertEqual(archive.infolist()[0].compress_type, zipfile.ZIP_STORED)
+                self.assertEqual(archive.read("mimetype"), b"application/epub+zip")
+                self.assertIn("OEBPS/chapter.xhtml", archive.namelist())
+                self.assertNotIn("OEBPS/xhtml/previous.xhtml", archive.namelist())
+            self.assertIn(f"WROTE {target}", output)
+            self.assertEqual(list(root.glob(".epub-*")), [])
+
+    def test_output_inside_build_is_rejected_before_cleanup(self):
+        for location in ("direct", "directory-alias", "file-alias", "link-to-outside"):
+            with self.subTest(location=location), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                previous_target, previous = self._previous_epub(root)
+                build = root / "build"
+                target = build / "book.epub"
+                target.write_bytes(previous)
+                output = target
+                if location == "directory-alias":
+                    alias = root / "build-alias"
+                    alias.symlink_to(build, target_is_directory=True)
+                    output = alias / "book.epub"
+                elif location == "file-alias":
+                    output = root / "output-alias.epub"
+                    output.symlink_to(target)
+                elif location == "link-to-outside":
+                    target.unlink()
+                    target.symlink_to(previous_target)
+                staged_chapter = build / "OEBPS/xhtml/previous.xhtml"
+                chapter_before = staged_chapter.read_bytes()
+
+                with (
+                    mock.patch.multiple(
+                        build_epub, OUT_ROOT=str(root / "source"),
+                        OEBPS=str(root / "source/OEBPS"), BUILD=str(build),
+                    ),
+                    mock.patch.object(sys, "argv", ["build_epub.py", "--out", str(output)]),
+                    self.assertRaisesRegex(ValueError, "outside the build directory"),
+                ):
+                    build_epub.main()
+
+                self.assertEqual(target.read_bytes(), previous)
+                self.assertEqual(previous_target.read_bytes(), previous)
+                self.assertEqual(staged_chapter.read_bytes(), chapter_before)
+                self.assertEqual(list(root.glob(".epub-*")), [])
+
+    def test_outward_build_aliases_are_rejected_before_cleanup(self):
+        for location in (
+            "directory-outward", "directory-chain", "external-directory",
+            "external-file", "external-directory-chain", "external-file-chain",
+            "parent-alias-outward",
+        ):
+            with self.subTest(location=location), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                previous_target, previous = self._previous_epub(root)
+                build = root / "build"
+                outside = root / "outside"
+                outside.mkdir()
+                external_epub = outside / "book.epub"
+                external_epub.write_bytes(previous)
+                redirect = build / "redirect"
+                # A relative outward target must retain the same dependency.
+                redirect.symlink_to("../outside", target_is_directory=True)
+                links = [redirect]
+                output = redirect / "book.epub"
+                if location == "directory-chain":
+                    middle = root / "outside-alias"
+                    middle.symlink_to(outside, target_is_directory=True)
+                    redirect.unlink()
+                    redirect.symlink_to(middle, target_is_directory=True)
+                    links.append(middle)
+                elif location.startswith("external-"):
+                    is_directory = "directory" in location
+                    target = redirect if is_directory else redirect / "book.epub"
+                    if location.endswith("-chain"):
+                        middle = root / "middle-alias"
+                        middle.symlink_to(target.relative_to(root), target_is_directory=is_directory)
+                        links.append(middle)
+                        target = middle
+                    alias = root / "output-alias"
+                    alias.symlink_to(target, target_is_directory=is_directory)
+                    links.append(alias)
+                    output = alias / "book.epub" if is_directory else alias
+                elif location == "parent-alias-outward":
+                    alias = root / "build-alias"
+                    alias.symlink_to(build, target_is_directory=True)
+                    links.append(alias)
+                    output = alias / "redirect/book.epub"
+                link_targets = {link: link.readlink() for link in links}
+                staged_chapter = build / "OEBPS/xhtml/previous.xhtml"
+                source_chapter = root / "source/OEBPS/xhtml/previous.xhtml"
+                chapter_before = staged_chapter.read_bytes()
+                source_before = source_chapter.read_bytes()
+                self.assertEqual(output.read_bytes(), previous)
+                error = None
+
+                with (
+                    mock.patch.multiple(
+                        build_epub, OUT_ROOT=str(root / "source"),
+                        OEBPS=str(root / "source/OEBPS"), BUILD=str(build),
+                    ),
+                    mock.patch.object(sys, "argv", ["build_epub.py", "--out", str(output)]),
+                    mock.patch.object(build_epub.shutil, "rmtree", wraps=build_epub.shutil.rmtree) as cleanup,
+                    redirect_stdout(io.StringIO()),
+                ):
+                    try:
+                        build_epub.main()
+                    except Exception as exc:
+                        error = exc
+
+                # These assertions run even when the builder raises a late error.
+                with self.subTest(check="pre-cleanup-refusal"):
+                    self.assertEqual(cleanup.call_args_list, [], "output admission ran destructive cleanup")
+                with self.subTest(check="intentional-error"):
+                    self.assertIsInstance(error, ValueError)
+                    self.assertRegex(str(error), "outside the build directory")
+                for link, target in link_targets.items():
+                    with self.subTest(check="preserved-link", link=link.name):
+                        self.assertTrue(link.is_symlink(), f"deleted or replaced link: {link}")
+                        self.assertEqual(link.readlink(), target)
+                with self.subTest(check="preserved-staged-chapter"):
+                    self.assertTrue(staged_chapter.is_file())
+                    self.assertEqual(staged_chapter.read_bytes(), chapter_before)
+                self.assertEqual(source_chapter.read_bytes(), source_before)
+                self.assertEqual(previous_target.read_bytes(), previous)
+                self.assertEqual(external_epub.read_bytes(), previous)
+                self.assertEqual(list(root.rglob(".epub-*")), [])
+
+    def test_output_aliases_independent_of_build_remain_supported(self):
+        for location in ("directory", "directory-chain", "file-chain"):
+            with self.subTest(location=location), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                _, previous = self._previous_epub(root)
+                outside = root / "outside"
+                outside.mkdir()
+                external_epub = outside / "book.epub"
+                external_epub.write_bytes(previous)
+                is_directory = location != "file-chain"
+                target = outside if is_directory else external_epub
+                if location.endswith("-chain"):
+                    middle = root / "middle-alias"
+                    middle.symlink_to(target.relative_to(root), target_is_directory=is_directory)
+                    target = middle
+                alias = root / "output-alias"
+                alias.symlink_to(target, target_is_directory=is_directory)
+                output = alias / "book.epub" if is_directory else alias
+                (root / "source/OEBPS/xhtml/previous.xhtml").write_text(
+                    "<html><body>Rebuilt chapter</body></html>", encoding="utf-8"
+                )
+                with (
+                    mock.patch.multiple(
+                        build_epub, OUT_ROOT=str(root / "source"),
+                        OEBPS=str(root / "source/OEBPS"), BUILD=str(root / "build"),
+                    ),
+                    mock.patch.object(sys, "argv", ["build_epub.py", "--out", str(output)]),
+                    redirect_stdout(io.StringIO()),
+                ):
+                    build_epub.main()
+                with zipfile.ZipFile(output) as archive:
+                    self.assertIsNone(archive.testzip())
+                    self.assertEqual(
+                        archive.read("OEBPS/xhtml/previous.xhtml"),
+                        b"<html><body>Rebuilt chapter</body></html>",
+                    )
+                if not is_directory:
+                    # Publishing replaces the output link, not its unrelated target.
+                    self.assertFalse(output.is_symlink())
+                    self.assertEqual(external_epub.read_bytes(), previous)
+                self.assertEqual(list(root.rglob(".epub-*")), [])
+
     def test_chapter_links_do_not_restore_unsanitized_captures(self):
         for link_href in (
             "one.xhtml", "two.xhtml", "two.xhtml#section", "two.xhtml?v=1", "%74wo.xhtml"

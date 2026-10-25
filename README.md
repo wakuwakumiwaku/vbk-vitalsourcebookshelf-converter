@@ -108,6 +108,16 @@ Produces `Neuroanatomie_9._Auflage_Trepel_offline.epub` (or whatever you
 set as `EPUB_OUT`). Open it in any EPUB reader — Calibre, KOReader, Apple
 Books, Tolino, the VitalSource Bookshelf app itself, etc.
 
+Archive writing is staged beside the destination. Only a completed archive
+replaces the output, using an atomic rename after ZIP close and readback.
+Write, readback or replacement errors leave an existing EPUB untouched and
+remove the temporary archive. A failed first build leaves no partial output.
+The output must be outside `BUILD` and must not depend on entries within it,
+including directory or file symlinks that lead out of the build tree and
+external aliases that traverse those links. Overlapping paths are rejected
+before the build directory is cleared. Missing-member reports remain
+informational; readback is not exhaustive EPUB validation.
+
 ### 7. (Optional) Build a PDF instead / as well
 
 ```bash
