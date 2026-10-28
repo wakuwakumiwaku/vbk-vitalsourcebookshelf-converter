@@ -118,6 +118,14 @@ external aliases that traverse those links. Overlapping paths are rejected
 before the build directory is cleared. Missing-member reports remain
 informational; readback is not exhaustive EPUB validation.
 
+Every declared OPF spine `itemref` must have an `idref` that resolves to a
+manifest item with an href and media type. Missing/empty or unresolved idrefs
+raise `ValueError` with the zero-based spine index instead of silently dropping
+chapters. This applies to XML and rendered-HTML OPF captures. Rejection happens
+before build cleanup or output replacement, preserving any previous build and
+EPUB. Correct or recapture the OPF and retry; existing chapter captures are not
+modified.
+
 ### 7. (Optional) Build a PDF instead / as well
 
 ```bash

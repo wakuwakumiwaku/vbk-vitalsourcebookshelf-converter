@@ -125,7 +125,11 @@ def package_path(root, href):
 
 
 def parse_opf(path):
-    """Return a manifest mapping and ordered spine entries from an OPF file."""
+    """Return a manifest mapping and ordered spine entries from an OPF file.
+
+    Reject missing or unresolved itemrefs rather than silently truncating the
+    publisher's reading order, even when the package came from rendered HTML.
+    """
     root = _package_root(path)
 
     manifest = {}
@@ -146,14 +150,19 @@ def parse_opf(path):
         idrefs = [
             itemref.get("idref")
             for itemref in spine_element
-            if _local_name(itemref) == "itemref" and itemref.get("idref")
+            if _local_name(itemref) == "itemref"
         ]
 
     spine = []
     for index, idref in enumerate(idrefs):
+        if not idref:
+            raise ValueError(f"Invalid OPF spine itemref at index {index}: missing idref")
         item = manifest.get(idref)
         if item is None:
-            continue
+            raise ValueError(
+                f"Invalid OPF spine itemref at index {index}: "
+                f"unresolved manifest idref {idref!r}"
+            )
         href, media_type = item
         spine.append(
             {

@@ -6,7 +6,7 @@ from scripts.opf_parser import package_path, parse_opf
 
 
 class ParseOpfTests(unittest.TestCase):
-    def test_namespaced_opf_allows_reordered_attributes_and_missing_idrefs(self):
+    def test_namespaced_opf_allows_reordered_attributes(self):
         opf = """\
 <?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
@@ -16,8 +16,6 @@ class ParseOpfTests(unittest.TestCase):
   </manifest>
   <spine>
     <itemref linear="yes" idref="one" />
-    <itemref />
-    <itemref idref="missing" />
     <itemref properties="page-spread-right" idref="two" />
   </spine>
 </package>
@@ -45,7 +43,7 @@ class ParseOpfTests(unittest.TestCase):
                     "media_type": "application/xhtml+xml",
                 },
                 {
-                    "index": 2,
+                    "index": 1,
                     "idref": "two",
                     "href": "xhtml/two.xhtml",
                     "media_type": "application/xhtml+xml",
