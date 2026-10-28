@@ -10,12 +10,14 @@ Removes reader plumbing that must not run or apply outside the reader:
    rule that hides the whole body and shows "To print, please use the print
    page range feature within the application." (this is why printing the raw
    capture yields a single page with that message);
-3. empty reader-injected divs left behind by the cleanup.
+3. empty divs left behind by the cleanup, unless they carry an ID that may
+   be a chapter-link or table-of-contents target.
 
 Use this only for books you are personally licensed to read.
 """
 import re
 import sys
+from html.parser import HTMLParser
 
 
 SCRIPT_BLOCK_RE = re.compile(r"<script\b[^>]*>.*?</script\s*>", re.IGNORECASE | re.DOTALL)
@@ -33,6 +35,26 @@ PRINT_GUARD_RE = re.compile(
     r"within\s+the\s+application\.",
     re.IGNORECASE,
 )
+EMPTY_DIV_RE = re.compile(
+    r"""<div\b(?:[^<>"']|"[^"]*"|'[^']*')*>\s*</div\s*>""", re.IGNORECASE
+)
+
+
+class _EmptyDivParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.has_target = False
+
+    def handle_starttag(self, tag, attrs):
+        self.has_target = any(name in {"id", "xml:id"} for name, _ in attrs)
+
+
+def _remove_untargeted_div(match):
+    # Inspect actual attribute names, not data-id or an ID mentioned in a title.
+    parser = _EmptyDivParser()
+    parser.feed(match.group(0))
+    parser.close()
+    return match.group(0) if parser.has_target else ""
 
 
 def _remove_blocked_style(match):
@@ -55,8 +77,8 @@ def sanitize(html):
     html = SCRIPT_BLOCK_RE.sub("", html)
     # 2. inspect each style independently and strip print protection
     html = STYLE_BLOCK_RE.sub(_remove_blocked_style, html)
-    # 3. remove empty anchors/divs left over
-    html = re.sub(r"<div\b[^>]*>\s*</div\s*>", "", html, flags=re.IGNORECASE)
+    # 3. keep empty fragment targets; remove only untargeted placeholders
+    html = EMPTY_DIV_RE.sub(_remove_untargeted_div, html)
     return html
 
 if __name__ == "__main__":

@@ -181,6 +181,8 @@ Two things to know if something looks off:
 - The captured HTML contains a hidden print-blocking style ("use the
   application to print"). `sanitize_xhtml.py` removes it — if you ever print
   a raw capture, this is why you get a single page with that message.
+- Empty divs with `id` or `xml:id` are preserved during cleanup, even without
+  visible content: chapter links and NCX entries may target those fragments.
 - The publisher's `toc.ncx` is reused as-is, so the EPUB's table of contents
   matches the book.
 - All scripts are resumable and skip work that is already done, so
