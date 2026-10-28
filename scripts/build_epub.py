@@ -122,22 +122,25 @@ def main():
     if output_uses_build(destination, build_root):
         raise ValueError("EPUB output must be outside the build directory.")
 
+    # A partial capture must not become a successful-looking, truncated EPUB.
+    # Admit every source before clearing the previous build tree.
+    manifest, spine = parse_opf(os.path.join(OUT_ROOT, "opf.xml"))
+    captures = [(item, str(package_path(OEBPS, item["href"]))) for item in spine]
+    missing = [item["href"] for item, source in captures if not os.path.isfile(source)]
+    if missing:
+        raise FileNotFoundError("Missing captured spine files:\n  " + "\n  ".join(missing))
+
     shutil.rmtree(BUILD, ignore_errors=True)
     os.makedirs(os.path.join(BUILD, "META-INF"), exist_ok=True)
     os.makedirs(os.path.join(BUILD, "OEBPS"), exist_ok=True)
 
-    manifest, spine = parse_opf(os.path.join(OUT_ROOT, "opf.xml"))
     print(f"spine items: {len(spine)}")
 
     # 1. copy + sanitize all xhtml
     build_oebps = os.path.join(BUILD, "OEBPS")
     xhtml_files = []
-    for item in spine:
+    for item, sp in captures:
         href = item["href"]
-        sp = str(package_path(OEBPS, href))
-        if not os.path.exists(sp):
-            print(f"  WARN missing captured xhtml: {href}")
-            continue
         with open(sp, encoding="utf-8") as source:
             html = source.read()
         html = sanitize(html)
