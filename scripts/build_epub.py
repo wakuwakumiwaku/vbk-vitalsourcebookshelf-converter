@@ -122,6 +122,14 @@ def main():
     if output_uses_build(destination, build_root):
         raise ValueError("EPUB output must be outside the build directory.")
 
+    # Never let staging cleanup delete captures or build files inside the source tree.
+    source_oebps = Path(OEBPS).resolve()
+    source_inputs = [Path(OEBPS), Path(OUT_ROOT) / "opf.xml", Path(OUT_ROOT) / "ncx.xml"]
+    if build_root.is_relative_to(source_oebps) or any(
+        output_uses_build(source.absolute(), build_root) for source in source_inputs
+    ):
+        raise ValueError("EPUB build directory must not overlap the source files.")
+
     # A partial capture must not become a successful-looking, truncated EPUB.
     # Admit every source before clearing the previous build tree.
     manifest, spine = parse_opf(os.path.join(OUT_ROOT, "opf.xml"))
