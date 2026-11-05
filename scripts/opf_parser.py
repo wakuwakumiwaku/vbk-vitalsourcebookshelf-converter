@@ -133,12 +133,17 @@ def parse_opf(path):
     root = _package_root(path)
 
     manifest = {}
+    seen_ids = set()
     manifest_element = _child(root, "manifest")
     if manifest_element is not None:
         for item in manifest_element:
             if _local_name(item) != "item":
                 continue
             item_id = item.get("id")
+            if item_id:
+                if item_id in seen_ids:
+                    raise ValueError(f"Duplicate OPF manifest id: {item_id!r}")
+                seen_ids.add(item_id)
             href = item.get("href")
             media_type = item.get("media-type")
             if item_id and media_type:

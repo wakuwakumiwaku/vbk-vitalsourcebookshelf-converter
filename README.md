@@ -197,3 +197,11 @@ failed first write leaves no partial PDF. Destination symlinks are followed
 and existing target permission bits are preserved. Replacement is atomic
 per path, not a power-loss durability guarantee; other hardlinks keep the
 old inode. This does not validate completeness of the selected chapter set.
+
+### Unique OPF manifest identifiers
+
+OPF manifest IDs must be unique, in both XML and rendered-HTML captures.
+`parse_opf()` raises `ValueError` naming a duplicate rather than silently
+redirecting spine references to the last item. Identical duplicate entries
+and duplicates with missing metadata are rejected too. Distinct IDs that
+reference the same package file remain supported.
