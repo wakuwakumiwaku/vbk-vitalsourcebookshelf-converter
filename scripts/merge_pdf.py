@@ -189,12 +189,14 @@ def main():
     args = ap.parse_args()
 
     spine = load_spine()
+    if not spine:
+        raise ValueError("Empty OPF spine: no PDF chapters to merge")
     parts = []
     missing = []
     for item in spine:
         name = os.path.basename(item["href"]).replace(".xhtml", "")
         p = os.path.join(PDF_DIR, f"{item['index']:03d}_{name}.pdf")
-        if os.path.exists(p) and os.path.getsize(p) > 2000:
+        if os.path.isfile(p):
             parts.append((item, p))
         else:
             missing.append((item["index"], item["href"]))
@@ -204,6 +206,7 @@ def main():
         print("MISSING:")
         for idx, href in missing:
             print(f"  [{idx}] {href}")
+        raise ValueError(f"Missing PDF parts for {len(missing)} spine item(s)")
 
     writer = pypdf.PdfWriter()
     # First pass: add all pages, record page count per part
@@ -211,6 +214,8 @@ def main():
     for item, p in parts:
         r = pypdf.PdfReader(p)
         n = len(r.pages)
+        if n == 0:
+            raise ValueError(f"No pages in PDF part [{item['index']}]: {p}")
         for page in r.pages:
             writer.add_page(page)
         part_pages.append((item, n))

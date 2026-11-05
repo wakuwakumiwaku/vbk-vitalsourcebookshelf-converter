@@ -205,3 +205,10 @@ OPF manifest IDs must be unique, in both XML and rendered-HTML captures.
 redirecting spine references to the last item. Identical duplicate entries
 and duplicates with missing metadata are rejected too. Distinct IDs that
 reference the same package file remain supported.
+
+### Complete PDF merges
+
+`merge_pdf.py` refuses an empty spine, missing per-spine PDF files, and PDF
+parts with no pages. Missing parts are listed before the merge is rejected;
+an existing output is not replaced. Valid small PDF parts are accepted based
+on their pages, not a file-size threshold. Rebuild missing parts before retrying.
