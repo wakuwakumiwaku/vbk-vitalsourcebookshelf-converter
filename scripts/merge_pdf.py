@@ -22,6 +22,8 @@ import os
 import argparse
 import stat
 import tempfile
+import posixpath
+from urllib.parse import unquote, urlsplit
 from pathlib import Path
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
@@ -232,11 +234,14 @@ def main():
         offset[item["index"]] = cum
         cum += n
 
-    # map href -> spine index
-    href_index = {}
-    for item in spine:
-        href_index[item["href"]] = item["index"]
-        href_index[item["href"].split("#")[0]] = item["index"]
+    # Compare local URI paths, not their encoded spelling or fragment suffix.
+    def local_target(href):
+        parsed = urlsplit(href)
+        if parsed.scheme or parsed.netloc:
+            return None
+        return posixpath.normpath(unquote(parsed.path))
+
+    href_index = {local_target(item["href"]): item["index"] for item in spine}
 
     # parse NCX navPoints with levels
     parents = []
@@ -245,8 +250,7 @@ def main():
         if len(parents) < depth:
             parents.extend([None] * (depth - len(parents)))
 
-        base = href.split("#")[0]
-        idx = href_index.get(base)
+        idx = href_index.get(local_target(href))
         ref = None
         if idx is not None and idx in offset:
             page_num = offset[idx]
