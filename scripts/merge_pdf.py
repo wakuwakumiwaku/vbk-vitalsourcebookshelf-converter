@@ -20,6 +20,9 @@ import json
 import sys
 import os
 import argparse
+import stat
+import tempfile
+from pathlib import Path
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 
@@ -158,6 +161,26 @@ def build_outline(ncx_path):
     add_navpoints(nav_map, 0)
     return outline
 
+def _write_pdf(writer, destination):
+    """Publish only a fully written PDF, following destination symlinks."""
+    path = Path(destination).resolve()
+    try:
+        previous_mode = stat.S_IMODE(path.stat().st_mode)
+    except FileNotFoundError:
+        previous_mode = None
+    else:
+        if not os.access(path, os.W_OK):
+            raise PermissionError(f"Cannot write read-only output: {path}")
+
+    with tempfile.TemporaryDirectory(prefix=".merged-pdf-", dir=path.parent) as staging:
+        staged = Path(staging) / "book.pdf"
+        with staged.open("wb") as handle:
+            writer.write(handle)
+        if previous_mode is not None:
+            staged.chmod(previous_mode)
+        os.replace(staged, path)
+
+
 def main():
     import pypdf
 
@@ -234,8 +257,7 @@ def main():
             print(f"  no page for navpoint '{label}' -> {href}")
         parents.append(ref)
 
-    with open(args.out, "wb") as f:
-        writer.write(f)
+    _write_pdf(writer, args.out)
     sz = os.path.getsize(args.out)
     print(f"\nWROTE {args.out} ({sz/1e6:.1f} MB, {total} pages)")
 

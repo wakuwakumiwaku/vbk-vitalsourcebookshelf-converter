@@ -187,3 +187,13 @@ Two things to know if something looks off:
   matches the book.
 - All scripts are resumable and skip work that is already done, so
   interrupted runs can simply be restarted.
+
+### PDF output publication
+
+`merge_pdf.py` stages the completed PDF beside its destination and replaces
+the output only after the write stream closes successfully. Write and rename
+errors propagate, remove staging files, and preserve an existing output; a
+failed first write leaves no partial PDF. Destination symlinks are followed
+and existing target permission bits are preserved. Replacement is atomic
+per path, not a power-loss durability guarantee; other hardlinks keep the
+old inode. This does not validate completeness of the selected chapter set.
