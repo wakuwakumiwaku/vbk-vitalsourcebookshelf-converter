@@ -181,7 +181,15 @@ def main():
             shipped.append(rel.replace(os.sep, "/"))
     shipped.sort()
 
+    # Manifest media types are authoritative; URI extensions need not identify content.
+    declared_types = {
+        package_relative_path(href).as_posix(): declared_type
+        for href, declared_type in manifest.values()
+    }
+
     def media_type(rel):
+        if rel in declared_types:
+            return declared_types[rel]
         if rel.endswith(".xhtml"):
             return "application/xhtml+xml"
         if rel.endswith(".jpg") or rel.endswith(".jpeg"):
